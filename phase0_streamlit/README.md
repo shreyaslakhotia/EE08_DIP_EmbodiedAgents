@@ -58,16 +58,38 @@ phase0_streamlit/
 
 1. Upload an image with a face showing emotion
 2. Select prompt variant (or edit manually)
+   - **Standard prompts**: Classification only
+   - **Empathy prompt**: Classification + supportive message
 3. Click "Classify Emotion"
 4. View results:
    - Uploaded image
    - Raw model output
    - Parsed emotion label
    - Confidence indicator
+   - Emotional support message (if empathy mode enabled)
 
-## Allowed Emotion Labels
+## Features
 
+### Emotion Classification
+Classifies facial expressions into one of 7 emotions:
 `angry`, `disgust`, `fear`, `happy`, `sad`, `surprise`, `neutral`
+
+### Empathetic Response (Optional)
+When using the "empathy" prompt variant, the system provides:
+- Emotion classification
+- Brief supportive message (2-3 sentences)
+- Contextually appropriate response based on detected emotion
+
+**⚠️ Important Disclaimer:**
+The empathetic responses are AI-generated and experimental. This tool is:
+- **NOT** a substitute for professional mental health support
+- **NOT** intended for crisis intervention
+- **NOT** validated for therapeutic use
+- For research and demonstration purposes only
+
+If you or someone you know needs help, please contact:
+- **National Crisis Helpline**: Call relevant emergency services
+- **Professional counselors**: Seek licensed mental health professionals
 
 ## Phase 0 Scope
 
@@ -75,6 +97,7 @@ phase0_streamlit/
 - ✅ Single image upload
 - ✅ Provider abstraction (easy cluster swap)
 - ✅ Multiple prompt variants
+- ✅ Optional empathy feature
 - ❌ No batch processing
 - ❌ No accuracy metrics
 - ❌ No dataset evaluation

@@ -40,6 +40,23 @@ angry, disgust, fear, happy, sad, surprise, neutral
 
 Output format: Just the emotion word in lowercase, nothing else."""
 
+# Prompt Version 4: Empathy-enabled (classification + supportive message)
+EMPATHY_PROMPT = """You are an empathetic AI companion with expertise in emotion recognition.
+
+Analyze the facial expression in this image and:
+1. Identify the emotion (choose ONE: angry, disgust, fear, happy, sad, surprise, neutral)
+2. Provide a brief, caring response (2-3 sentences)
+
+Your response should be warm, non-judgmental, and genuinely supportive.
+
+Format your response EXACTLY as:
+Emotion: [label]
+Message: [your supportive message]
+
+Example:
+Emotion: happy
+Message: I can see you're feeling joyful! It's wonderful to witness such positive energy. Keep embracing these bright moments."""
+
 # Default prompt (easy to swap for experimentation)
 DEFAULT_PROMPT = STRICT_PROMPT
 
@@ -48,6 +65,7 @@ PROMPT_VERSIONS = {
     "strict": STRICT_PROMPT,
     "json": JSON_PROMPT,
     "chain-of-thought": COT_PROMPT,
+    "empathy": EMPATHY_PROMPT,
 }
 
 def get_prompt(version: str = "strict") -> str:
@@ -55,7 +73,7 @@ def get_prompt(version: str = "strict") -> str:
     Get a prompt by version name.
     
     Args:
-        version: One of "strict", "json", "chain-of-thought"
+        version: One of "strict", "json", "chain-of-thought", "empathy"
     
     Returns:
         The prompt string

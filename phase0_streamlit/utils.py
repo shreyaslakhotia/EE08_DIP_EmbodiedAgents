@@ -116,6 +116,59 @@ def extract_label(output_text: str, allowed_labels: list) -> Tuple[str, float]:
     return "unknown", 0.0
 
 
+def extract_empathy_response(output_text: str, allowed_labels: list) -> Tuple[str, float, Optional[str]]:
+    """
+    Extract both emotion label and empathy message from model output.
+    
+    Expected format:
+    Emotion: [label]
+    Message: [supportive text]
+    
+    Args:
+        output_text: Raw model output
+        allowed_labels: List of valid emotion labels
+    
+    Returns:
+        Tuple of (label, confidence_score, empathy_message)
+    """
+    if not output_text:
+        return "unknown", 0.0, None
+    
+    # Try to parse structured format
+    emotion_match = re.search(r'Emotion:\s*(\w+)', output_text, re.IGNORECASE)
+    message_match = re.search(r'Message:\s*(.+?)(?:\n|$)', output_text, re.IGNORECASE | re.DOTALL)
+    
+    if emotion_match and message_match:
+        emotion = normalize_text(emotion_match.group(1))
+        message = message_match.group(1).strip()
+        
+        # Validate emotion label
+        if emotion in allowed_labels:
+            return emotion, 0.95, message
+        else:
+            # Try fuzzy matching for emotion
+            for label in allowed_labels:
+                if label in emotion:
+                    return label, 0.7, message
+    
+    # Fallback: try to extract emotion using standard method
+    label, confidence = extract_label(output_text, allowed_labels)
+    
+    # Try to extract any text that looks like a message
+    # Look for sentences after the emotion label
+    if label != "unknown":
+        # Remove the emotion label from text and take remaining as message
+        remaining = re.sub(r'Emotion:\s*\w+', '', output_text, flags=re.IGNORECASE)
+        remaining = re.sub(r'Message:', '', remaining, flags=re.IGNORECASE)
+        remaining = remaining.strip()
+        
+        if remaining and len(remaining) > 10:  # Reasonable message length
+            return label, confidence * 0.8, remaining
+    
+    # No structured output found
+    return label, confidence, None
+
+
 def compute_image_hash(image_bytes: bytes) -> str:
     """
     Compute SHA256 hash of image bytes for caching.

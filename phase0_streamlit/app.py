@@ -16,7 +16,8 @@ from provider import get_provider
 from prompts import ALLOWED_LABELS, PROMPT_VERSIONS, get_prompt
 from utils import (
     preprocess_image, 
-    extract_label, 
+    extract_label,
+    extract_empathy_response,
     validate_image, 
     compute_cache_key
 )
@@ -44,12 +45,12 @@ def initialize_provider():
 
 # Cached prediction function
 @st.cache_data(show_spinner=False)
-def predict_emotion_cached(image_bytes: bytes, prompt: str, _provider):
+def predict_emotion_cached(image_bytes: bytes, prompt: str, _provider, use_empathy: bool = False):
     """
     Cached prediction function to avoid redundant API calls.
     
     Note: _provider is prefixed with underscore to exclude from cache key.
-    Cache key is based on (image_bytes, prompt) only.
+    Cache key is based on (image_bytes, prompt, use_empathy) only.
     """
     try:
         # Preprocess image
@@ -60,14 +61,19 @@ def predict_emotion_cached(image_bytes: bytes, prompt: str, _provider):
         raw_output = _provider.predict(processed, prompt)
         elapsed = time.time() - start_time
         
-        # Parse output
-        label, confidence = extract_label(raw_output, ALLOWED_LABELS)
+        # Parse output based on mode
+        if use_empathy:
+            label, confidence, empathy_msg = extract_empathy_response(raw_output, ALLOWED_LABELS)
+        else:
+            label, confidence = extract_label(raw_output, ALLOWED_LABELS)
+            empathy_msg = None
         
         return {
             "success": True,
             "raw_output": raw_output,
             "label": label,
             "confidence": confidence,
+            "empathy_message": empathy_msg,
             "elapsed_time": elapsed,
         }
     except Exception as e:
@@ -171,15 +177,19 @@ def main():
         if uploaded_file is None:
             st.info("👈 Upload an image to get started")
         else:
+            # Detect if using empathy prompt
+            use_empathy = prompt_version == "empathy"
+            
             # Classify button
             if st.button("🚀 Classify Emotion", type="primary", use_container_width=True):
                 with st.spinner("Analyzing image... (may take 20-60s on first call)"):
-                    result = predict_emotion_cached(image_bytes, custom_prompt, provider)
+                    result = predict_emotion_cached(image_bytes, custom_prompt, provider, use_empathy)
                 
                 if result["success"]:
                     # Display parsed label prominently
                     label = result["label"]
                     confidence = result["confidence"]
+                    empathy_msg = result.get("empathy_message")
                     
                     if label == "unknown":
                         st.error("❌ Could not parse emotion label")
@@ -205,6 +215,16 @@ def main():
                             delta=None,
                             help="How confidently the label was parsed from model output"
                         )
+                    
+                    # Display empathy message if available
+                    if empathy_msg and label != "unknown":
+                        st.divider()
+                        with st.expander("💬 Emotional Support Message", expanded=True):
+                            st.info(empathy_msg, icon="💙")
+                            st.caption("""
+                            *This is an AI-generated supportive response. 
+                            Not a substitute for professional mental health support.*
+                            """)
                     
                     st.divider()
                     
