@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import scrolledtext
 from PIL import Image, ImageTk
 from picamera2 import Picamera2
-from ollama import AsyncClient
+from ollama import Client
 from faster_whisper import WhisperModel
 from gtts import gTTS
 import speech_recognition as sr
@@ -26,32 +26,38 @@ MODEL_NAME = "qwen3-vl:2b-instruct-q4_k_m"
 class RemoteBrain:
     """Handles all network communication with the MacBook server."""
     def __init__(self, server_ip, model):
-        self.client = AsyncClient(host=f'http://{server_ip}:11434')
+        self.server_ip = server_ip
         self.model = model
         self.history = [{'role': 'system', 'content': 'You are an embodied Study Buddy. Provide concise, helpful answers.'}]
 
-    async def generate_response_stream(self, user_text, image_path=None):
-        """Yields tokens as they stream in from the Mac server."""
+    def generate_response_stream(self, user_text, image_path=None):
+        """Yields tokens synchronously as they stream in from the Mac server."""
+        
+        # Instantiate the standard sync client
+        client = Client(host=f'http://{self.server_ip}:11434')
+        
         images = [image_path] if image_path else []
         self.history.append({'role': 'user', 'content': user_text, 'images': images})
         
         full_reply = ""
         try:
-            stream = await self.client.chat(
+            # Standard synchronous stream
+            stream = client.chat(
                 model=self.model,
                 messages=self.history,
                 stream=True,
                 keep_alive=-1
             )
-            async for chunk in stream:
+            for chunk in stream:
                 token = chunk['message']['content']
                 full_reply += token
                 yield token
 
             self.history.append({'role': 'assistant', 'content': full_reply})
             self._clean_history()
+            
         except Exception as e:
-            yield f""
+            yield f"\n[NETWORK ERROR: Cannot reach MacBook at {self.server_ip}. Details: {e}]"
 
     def _clean_history(self):
         """Removes heavy image payloads from past messages to prevent network lag."""
@@ -242,20 +248,16 @@ class StudyBuddyApp:
             self.trigger_ai_interaction(text)
 
     def trigger_ai_interaction(self, text):
-        """Bridges the sync Tkinter loop to the async AI network call."""
+        """Bridges the Tkinter loop to the background network thread."""
         self.processing = True
         self.chat_log.insert(tk.END, f"You: {text}\n\n")
         self.chat_log.see(tk.END)
 
-        def run_async():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(self.process_ai_stream(text))
-            loop.close()
-            
-        threading.Thread(target=run_async, daemon=True).start()
+        # Simply launch the synchronous process in a background thread
+        # This prevents Tkinter from freezing without needing asyncio
+        threading.Thread(target=self.process_ai_stream, args=(text,), daemon=True).start()
 
-    async def process_ai_stream(self, text):
+    def process_ai_stream(self, text):
         """Handles vision keywords and streams the network response."""
         vision_keywords = ["look", "see", "show", "analyze", "watch"]
         image_path = None
@@ -268,8 +270,9 @@ class StudyBuddyApp:
         self.chat_log.insert(tk.END, "Agent: ")
         
         full_reply = ""
-        # Stream the tokens from the RemoteBrain
-        async for token in self.brain.generate_response_stream(text, image_path):
+        
+        # Standard synchronous for-loop
+        for token in self.brain.generate_response_stream(text, image_path):
             full_reply += token
             self.chat_log.insert(tk.END, token)
             self.chat_log.see(tk.END)
