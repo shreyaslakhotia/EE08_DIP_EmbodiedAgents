@@ -1,3 +1,4 @@
+from email.mime import text
 import tkinter as tk
 from tkinter import scrolledtext
 import speech_recognition as sr
@@ -6,6 +7,7 @@ import ollama
 import cv2
 import threading
 import time
+import pyttsx3
 import os
 
 # 1. SETUP BRAINS
@@ -47,7 +49,12 @@ class MasterAgent:
         
         # Start Voice Listening thread
         threading.Thread(target=self.voice_loop, daemon=True).start()
-
+        # --- VOICE OUTPUT SETUP ---
+        self.engine = pyttsx3.init()
+        self.engine.setProperty('rate', 150) # Adjust speed (150-200 is good)
+        # On Mac, 'Ava' or 'Samantha' are great voices
+        self.engine.setProperty('voice', 'com.apple.voice.premium.en-US.Ava')
+        
     def handle_typed_input(self, event=None):
         """Captures text from the entry box and sends it for processing."""
         text = self.user_entry.get().strip()
@@ -106,8 +113,12 @@ class MasterAgent:
             # Connect to your local Qwen3-VL
             response = ollama.chat(model='qwen3-vl:4b', messages=self.history)
             reply = response['message']['content']
+
             self.update_chat(f"Agent: {reply}")
+            self.speak(reply)  # Speak the response
+
             self.history.append({'role': 'assistant', 'content': reply})
+
         except Exception as e:
             self.update_chat(f"SYSTEM ERROR: {e}")
 
@@ -124,6 +135,14 @@ class MasterAgent:
     def shutdown(self):
         self.running = False
         self.root.destroy()
+
+    def speak(self, text):
+        def run_speech():
+            self.engine.say(text)
+            self.engine.runAndWait()
+    
+        # Run in a thread so the UI doesn't freeze while talking
+        threading.Thread(target=run_speech, daemon=True).start()
 
 if __name__ == "__main__":
     root = tk.Tk()
