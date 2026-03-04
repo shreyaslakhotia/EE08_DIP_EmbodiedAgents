@@ -5,7 +5,6 @@ from picamera2 import Picamera2
 from ollama import AsyncClient
 from faster_whisper import WhisperModel
 import speech_recognition as sr
-import whisper
 import pyttsx3
 import threading
 import asyncio
