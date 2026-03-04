@@ -51,7 +51,7 @@ class RemoteBrain:
             self.history.append({'role': 'assistant', 'content': full_reply})
             self._clean_history()
         except Exception as e:
-            yield f"\n[NETWORK ERROR: Cannot reach MacBook at {MAC_IP}. Details: {e}]"
+            yield f""
 
     def _clean_history(self):
         """Removes heavy image payloads from past messages to prevent network lag."""
