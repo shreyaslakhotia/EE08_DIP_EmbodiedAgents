@@ -3,6 +3,7 @@ from tkinter import scrolledtext
 from PIL import Image, ImageTk
 from picamera2 import Picamera2
 from ollama import AsyncClient
+from faster_whisper import WhisperModel
 import speech_recognition as sr
 import whisper
 import pyttsx3
@@ -12,9 +13,9 @@ import time
 import os
 
 # 1. SETUP BRAINS (Optimized for Pi 5 Architecture)
-print("Loading Whisper (Tiny Model / CPU Mode)...")
-# Forcing the 'tiny' model and CPU device prevents memory exhaustion on the Pi
-whisper_model = whisper.load_model("tiny", device="cpu")
+print("Loading Whisper (Tiny.en Model / INT8 Mode)...")
+#int8 quantization
+whisper_model = whisper.load_model("tiny.en", device="cpu", compute_type="int8")
 
 class MasterAgent:
     def __init__(self, root):
@@ -130,19 +131,23 @@ class MasterAgent:
     def listen_voice(self):
         with sr.Microphone() as source:
             self.update_status("LISTENING...")
-            self.recognizer.adjust_for_ambient_noise(source, duration=1)
+            self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
             try:
                 audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=8)
                 self.update_status("TRANSCRIBING...")
                 with open("temp.wav", "wb") as f: 
                     f.write(audio.get_wav_data())
                 
-                # fp16=False bypasses the Illegal Instruction error on ARM CPUs
-                result = whisper_model.transcribe("temp.wav", fp16=False)
-                return result["text"].strip()
-            except: 
+                # New Faster-Whisper transcription logic
+                segments, info = whisper_model.transcribe("temp.wav", beam_size=1)
+                
+                # Rebuild the text from the chunks
+                text = " ".join([segment.text for segment in segments])
+                return text.strip()
+            except Exception as e: 
+                print(f"Voice Error: {e}")
                 return None
-
+                
     async def handle_interaction(self, text):
         self.update_chat_block(f"You: {text}")
         images = []
@@ -167,7 +172,7 @@ class MasterAgent:
                 model='qwen3-vl:4b', 
                 messages=self.history, 
                 stream=True,
-                keep_alive="-1" # Keeps the model in RAM
+                keep_alive= -1 # Keeps the model in RAM
             ):
                 token = chunk['message']['content']
                 full_reply += token
