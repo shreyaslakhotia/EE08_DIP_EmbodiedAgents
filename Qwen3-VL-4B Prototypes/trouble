@@ -1,0 +1,7 @@
+curl http://127.0.0.1:11434/api/chat -d '{
+  "model": "qwen3-vl:4b",
+  "messages": [
+    { "role": "user", "content": "Explain why the sky is blue in one sentence." }
+  ],
+  "stream": true
+}'
