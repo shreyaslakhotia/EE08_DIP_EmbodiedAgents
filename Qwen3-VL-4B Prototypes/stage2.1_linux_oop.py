@@ -2,16 +2,16 @@ import tkinter as tk
 from tkinter import scrolledtext
 from PIL import Image, ImageTk
 from picamera2 import Picamera2
-from ollama import Client
 from faster_whisper import WhisperModel
-from gtts import gTTS
 import speech_recognition as sr
-import pyttsx3
+from gtts import gTTS
 import threading
-import asyncio
+import requests
+import base64
+import json
+import time
+import os
 import re
-import os
-import os
 
 # ==========================================
 # CONFIGURATION
@@ -21,43 +21,60 @@ MODEL_NAME = "qwen3-vl:2b-instruct-q4_k_m"
 
 
 # ==========================================
-# 1. THE BRAIN (Remote Network Client)
+# 1. THE BRAIN (Raw HTTP REST Client)
 # ==========================================
 class RemoteBrain:
-    """Handles all network communication with the MacBook server."""
+    """Handles all network communication with the MacBook server via pure HTTP."""
     def __init__(self, server_ip, model):
-        self.server_ip = server_ip
+        self.server_url = f"http://{server_ip}:11434/api/chat"
         self.model = model
         self.history = [{'role': 'system', 'content': 'You are an embodied Study Buddy. Provide concise, helpful answers.'}]
 
     def generate_response_stream(self, user_text, image_path=None):
-        """Yields tokens synchronously as they stream in from the Mac server."""
+        """Yields tokens synchronously via raw REST API. No asyncio needed."""
+        images_b64 = []
+        if image_path:
+            try:
+                # The Ollama API requires raw base64 strings for images
+                with open(image_path, "rb") as img_file:
+                    b64_string = base64.b64encode(img_file.read()).decode('utf-8')
+                    images_b64.append(b64_string)
+            except Exception as e:
+                print(f"Image Encoding Error: {e}")
+
+        # Construct the message payload
+        message = {'role': 'user', 'content': user_text}
+        if images_b64:
+            message['images'] = images_b64
+            
+        self.history.append(message)
         
-        # Instantiate the standard sync client
-        client = Client(host=f'http://{self.server_ip}:11434')
-        
-        images = [image_path] if image_path else []
-        self.history.append({'role': 'user', 'content': user_text, 'images': images})
+        payload = {
+            "model": self.model,
+            "messages": self.history,
+            "stream": True,
+            "keep_alive": -1
+        }
         
         full_reply = ""
         try:
-            # Standard synchronous stream
-            stream = client.chat(
-                model=self.model,
-                messages=self.history,
-                stream=True,
-                keep_alive=-1
-            )
-            for chunk in stream:
-                token = chunk['message']['content']
-                full_reply += token
-                yield token
+            # Pure synchronous HTTP POST request. Immune to asyncio crashes.
+            with requests.post(self.server_url, json=payload, stream=True) as response:
+                response.raise_for_status()
+                
+                for line in response.iter_lines():
+                    if line:
+                        chunk = json.loads(line)
+                        if "message" in chunk and "content" in chunk["message"]:
+                            token = chunk["message"]["content"]
+                            full_reply += token
+                            yield token
 
             self.history.append({'role': 'assistant', 'content': full_reply})
             self._clean_history()
             
         except Exception as e:
-            yield f"\n[NETWORK ERROR: Cannot reach MacBook at {self.server_ip}. Details: {e}]"
+            yield f"\n[NETWORK ERROR: Cannot reach MacBook at {MAC_IP}. Details: {e}]"
 
     def _clean_history(self):
         """Removes heavy image payloads from past messages to prevent network lag."""
@@ -81,7 +98,6 @@ class VisionSystem:
         self.picam2.start()
 
     def get_current_frame(self):
-        """Returns the current frame as a PIL Image."""
         try:
             frame = self.picam2.capture_array("main")
             return Image.fromarray(frame)
@@ -89,7 +105,6 @@ class VisionSystem:
             return None
 
     def save_frame(self, img_obj, filepath="vision_temp.jpg"):
-        """Saves a PIL image to disk for the AI to read."""
         if img_obj:
             img_obj.save(filepath)
             return filepath
@@ -106,13 +121,11 @@ class AudioSystem:
     """Manages text-to-speech and speech-to-text."""
     def __init__(self):
         print("Initializing Audio System...")
-        # Speech-to-Text Setup
         self.whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
         self.recognizer = sr.Recognizer()
         self.recognizer.pause_threshold = 0.5
 
     def listen(self, status_callback):
-        """Listens to the microphone and transcribes audio to text."""
         with sr.Microphone() as source:
             status_callback("LISTENING...")
             self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
@@ -131,34 +144,20 @@ class AudioSystem:
 
     def _clean_for_speech(self, text):
         """Sanitizes LLM markdown and emojis so the TTS doesn't read them."""
-        # 1. Strip out markdown symbols (asterisks, hashes, backticks, brackets)
         cleaned = re.sub(r'[\*\#\[\]\(\)\`\_]', '', text)
-        
-        # 2. Strip out emojis and completely foreign characters 
-        # (Keeps only word characters, spaces, and basic punctuation)
         cleaned = re.sub(r'[^\w\s.,!?\'"\-:]', '', cleaned)
-        
-        # 3. Condense any accidental double-spaces left behind
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        
         return cleaned
 
     def speak(self, text):
-        """Cleans the text and speaks it out loud in a non-blocking thread."""
         def run_speech():
             cleaned_text = self._clean_for_speech(text)
-            
-            # Prevent the engine from crashing if the AI only replied with an emoji
             if not cleaned_text:
                 return 
-                
             try:
-                # Generate natural voice (tld='com' is US English, 'co.uk' is British)
                 tts = gTTS(text=cleaned_text, lang='en', tld='com')
                 audio_file = "speech.mp3"
                 tts.save(audio_file)
-                
-                # Play the file silently via the Linux terminal using mpg123
                 os.system(f"mpg123 -q {audio_file}")
             except Exception as e:
                 print(f"TTS Error: {e}")
@@ -170,25 +169,22 @@ class AudioSystem:
 # 4. THE INTERFACE (Main Orchestrator)
 # ==========================================
 class StudyBuddyApp:
-    """The main Tkinter GUI that glues all systems together."""
+    """The main Tkinter GUI that glues all systems together synchronously."""
     def __init__(self, root):
         self.root = root
         self.root.title("Study Buddy Edge Client")
         self.root.geometry("800x900")
 
-        # Initialize Sub-systems
         self.brain = RemoteBrain(server_ip=MAC_IP, model=MODEL_NAME)
         self.vision = VisionSystem()
         self.audio = AudioSystem()
 
-        # State Variables
         self.running = True
         self.processing = False
         self.current_frame_img = None
 
         self._build_ui()
         
-        # Start background loops
         self.update_video_feed()
         threading.Thread(target=self.voice_loop, daemon=True).start()
 
@@ -216,7 +212,6 @@ class StudyBuddyApp:
         self.exit_btn.pack(pady=10)
 
     def update_video_feed(self):
-        """Updates the GUI video feed only when the system isn't busy."""
         if self.running:
             if not self.processing:
                 img = self.vision.get_current_frame()
@@ -233,7 +228,6 @@ class StudyBuddyApp:
         self.status.config(text=f"STATUS: {msg}")
 
     def voice_loop(self):
-        """Continuously listens for voice input in the background."""
         while self.running:
             if not self.processing:
                 user_text = self.audio.listen(self.set_status)
@@ -241,24 +235,22 @@ class StudyBuddyApp:
                     self.trigger_ai_interaction(user_text)
 
     def handle_input(self):
-        """Triggered by typing in the text box."""
         text = self.user_entry.get().strip()
         if text and not self.processing:
             self.user_entry.delete(0, tk.END)
             self.trigger_ai_interaction(text)
 
     def trigger_ai_interaction(self, text):
-        """Bridges the Tkinter loop to the background network thread."""
+        """Bridges the Tkinter UI to the background network thread. NO ASYNC."""
         self.processing = True
         self.chat_log.insert(tk.END, f"You: {text}\n\n")
         self.chat_log.see(tk.END)
 
-        # Simply launch the synchronous process in a background thread
-        # This prevents Tkinter from freezing without needing asyncio
+        # Start a standard thread. No asyncio loops at all.
         threading.Thread(target=self.process_ai_stream, args=(text,), daemon=True).start()
 
     def process_ai_stream(self, text):
-        """Handles vision keywords and streams the network response."""
+        """Handles vision routing and processes the network stream synchronously."""
         vision_keywords = ["look", "see", "show", "analyze", "watch"]
         image_path = None
         
@@ -270,8 +262,7 @@ class StudyBuddyApp:
         self.chat_log.insert(tk.END, "Agent: ")
         
         full_reply = ""
-        
-        # Standard synchronous for-loop
+        # Standard synchronous for-loop processing the generator
         for token in self.brain.generate_response_stream(text, image_path):
             full_reply += token
             self.chat_log.insert(tk.END, token)
