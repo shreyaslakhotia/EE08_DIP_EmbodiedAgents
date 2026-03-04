@@ -1,4 +1,0 @@
-[Service]
-Environment="OLLAMA_NUM_THREADS=4"
-Environment="OLLAMA_MAX_VRAM=0"
-Environment="OLLAMA_KEEP_ALIVE=-1"
