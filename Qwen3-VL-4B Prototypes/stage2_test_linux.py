@@ -14,7 +14,7 @@ import os
 # 1. SETUP BRAINS (Optimized for Pi 5 Architecture)
 print("Loading Whisper (Tiny.en Model / INT8 Mode)...")
 #int8 quantization
-whisper_model = whisper.load_model("tiny.en", device="cpu", compute_type="int8")
+whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
 
 class MasterAgent:
     def __init__(self, root):
@@ -84,25 +84,28 @@ class MasterAgent:
     def update_video_feed(self):
         """Continuously pulls frames directly from the Pi Camera sensor."""
         if self.running:
-            try:
-                # Grab native RGB array
-                frame = self.picam2.capture_array("main")
-                img = Image.fromarray(frame)
-                
-                # Keep original resolution in memory for AI inference
-                self.current_frame_img = img.copy()
-                
-                # Resize specifically for the Tkinter display
-                img_gui = img.resize((400, 300))
-                imgtk = ImageTk.PhotoImage(image=img_gui)
-                
-                self.vid_label.imgtk = imgtk
-                self.vid_label.configure(image=imgtk)
-            except Exception as e:
-                pass # Suppress minor frame drops
+            # CRITICAL OPTIMIZATION: Stop updating the GUI video if AI is working
+            # This hands 100% of the Pi 5's CPU cores back to Ollama
+            if not self.processing: 
+                try:
+                    frame = self.picam2.capture_array("main")
+                    img = Image.fromarray(frame)
+                    
+                    self.current_frame_img = img.copy()
+                    
+                    # Resize is CPU intensive. We only do it when idle.
+                    img_gui = img.resize((400, 300))
+                    imgtk = ImageTk.PhotoImage(image=img_gui)
+                    
+                    self.vid_label.imgtk = imgtk
+                    self.vid_label.configure(image=imgtk)
+                except Exception as e:
+                    pass 
             
-            # Loop at ~30 FPS
-            self.root.after(30, self.update_video_feed)
+            # Change from 30ms (~33 FPS) to 150ms (~6 FPS)
+            # You do not need a buttery smooth 60FPS feed for a Study Buddy, 
+            # you need the AI to be fast.
+            self.root.after(150, self.update_video_feed)
 
     def trigger_interaction(self, text):
         """Safely bridges the synchronous GUI with the asynchronous AI."""
