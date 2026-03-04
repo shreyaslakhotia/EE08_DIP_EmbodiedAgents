@@ -182,6 +182,12 @@ class MasterAgent:
             self.speak(full_reply)
             self.history.append({'role': 'assistant', 'content': full_reply})
 
+            # --- THE SPEED FIX: CLEAN THE HISTORY ---
+            # Remove the heavy image payload from past messages so it isn't resent
+            for msg in self.history:
+                if 'images' in msg:
+                    del msg['images']            
+
         except Exception as e:
             self.update_chat_block(f"\nSYSTEM ERROR: {e}")
 
@@ -201,7 +207,6 @@ class MasterAgent:
         """Live log update for asynchronous streaming tokens."""
         self.chat_log.insert(tk.END, msg)
         self.chat_log.see(tk.END)
-        self.root.update_idletasks() # Force GUI refresh
 
     def speak(self, text):
         def run_speech():
