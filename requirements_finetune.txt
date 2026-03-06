@@ -1,0 +1,33 @@
+# Fine-tuning requirements for Qwen3-VL Study Buddy
+# Install: pip install -r requirements_finetune.txt
+
+# Core ML
+torch>=2.1.0
+torchvision>=0.16.0
+
+# Unsloth — accelerated LoRA fine-tuning (preferred)
+unsloth
+
+# HuggingFace ecosystem (also used as fallback if Unsloth unavailable)
+transformers>=4.46.0
+peft>=0.13.0
+trl>=0.12.0
+datasets>=3.0.0
+accelerate>=1.0.0
+bitsandbytes>=0.44.0
+
+# Qwen VL specific
+qwen-vl-utils>=0.0.8
+
+# Image processing
+Pillow>=10.0.0
+
+# Dataset exploration
+matplotlib>=3.8.0
+
+# Deployment (Raspberry Pi inference)
+ollama>=0.4.0
+opencv-python>=4.8.0
+
+# Optional: experiment tracking
+# wandb>=0.16.0

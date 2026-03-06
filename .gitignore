@@ -11,10 +11,17 @@ __pycache__/
 # Environment variables
 .env
 
-# Training outputs
+# Training outputs — large model files (download from OneDrive instead)
 logs/
 runs/
 checkpoints/
 
+# Large processed data (regenerate with 02_prepare_finetune_data.py)
+data/emotion_processed/
+
+# Unsloth compilation cache (auto-generated)
+unsloth_compiled_cache/
+
 # OS junk
 .DS_Store
+Thumbs.db
