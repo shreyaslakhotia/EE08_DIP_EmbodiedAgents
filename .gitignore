@@ -16,6 +16,9 @@ logs/
 runs/
 checkpoints/
 
+# Dataset images — too large for git (download FER-2013 separately)
+data/emotion_dataset/
+
 # Large processed data (regenerate with 02_prepare_finetune_data.py)
 data/emotion_processed/
 

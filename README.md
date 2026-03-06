@@ -26,9 +26,10 @@ The OneDrive folder contains:
 
 ## Fine-Tuning Pipeline
 
-The complete fine-tuning pipeline is documented in **[FINETUNE_README.md](FINETUNE_README.md)**. Summary:
+The complete fine-tuning pipeline is documented in **[docs/FINETUNE_README.md](docs/FINETUNE_README.md)**. Summary:
 
 ```bash
+cd finetuning/
 python 01_explore_dataset.py          # Analyze FER-2013 dataset
 python 02_prepare_finetune_data.py    # Preprocess images + build JSONL
 python 03_finetune_qwen3vl_lora.py    # QLoRA fine-tuning (~4.5 hours)
@@ -48,13 +49,32 @@ cd ~/studybuddy && ollama create studybuddy -f Modelfile
 python run_studybuddy.py   # Camera-based inference
 ```
 
-## Other Components
+## Repository Structure
 
-| Folder | Description |
-|--------|-------------|
-| `phase0_streamlit/` | Streamlit-based prototype with cloud Qwen API |
-| `Qwen3-VL-4B Prototypes/` | Stage 1 & 2 milestone prototypes |
-| `modular codes/` | Camera, PIR sensor, and Ollama integration tests |
+```
+├── README.md
+├── docs/                              # Documentation
+│   ├── FINETUNE_README.md             #   Full fine-tuning & deployment guide
+│   └── howtoaccessgpu.md              #   GPU cluster access instructions
+├── finetuning/                        # Fine-tuning pipeline
+│   ├── 01_explore_dataset.py          #   Step 1: Dataset analysis
+│   ├── 02_prepare_finetune_data.py    #   Step 2: Preprocess + build JSONL
+│   ├── 03_finetune_qwen3vl_lora.py    #   Step 3: QLoRA fine-tuning
+│   ├── 04_export_model.py             #   Step 4: GGUF export
+│   ├── 05_evaluate_test_accuracy.py   #   Step 5: Evaluation
+│   ├── requirements.txt               #   Python dependencies
+│   ├── training_log.txt               #   Training console output
+│   └── assets/                        #   Plots & visualizations
+├── prototypes/                        # Earlier prototypes
+│   ├── phase0_streamlit/              #   Streamlit cloud-API prototype
+│   ├── qwen3_vl_4b/                   #   Stage 1 & 2 milestone prototypes
+│   └── modular_codes/                 #   Camera, PIR, Ollama integration tests
+├── tests/                             # Hardware test scripts
+│   ├── sr_test.py                     #   Microphone / speech recognition test
+│   └── whisper_test.py                #   Whisper STT test
+└── data/
+    └── finetune_data/                 # Generated JSONL training data
+```
 
 ## License
 
