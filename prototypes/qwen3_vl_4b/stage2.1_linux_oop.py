@@ -16,8 +16,8 @@ import re
 # ==========================================
 # CONFIGURATION
 # ==========================================
-MAC_IP = "10.91.51.112"  # <-- CHANGE THIS TO YOUR MACBOOK'S IP
-MODEL_NAME = "qwen3-vl:2b-instruct-q4_k_m"
+MAC_IP = "10.91.10.229"  # <-- CHANGE THIS TO YOUR MACBOOK'S IP
+MODEL_NAME = "buddy"
 
 
 # ==========================================
