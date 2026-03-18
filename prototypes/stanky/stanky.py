@@ -130,8 +130,14 @@ class VisionSystem:
 
     def get_current_frame(self):
         try:
+            # Grab the raw array from the camera
             frame = self.picam2.capture_array("main")
-            return Image.fromarray(frame)
+            
+            # THE FIX: Reverse the color channels from BGR to RGB
+            # This uses standard Numpy slicing to flip the 3rd dimension (colors)
+            frame_rgb = frame[:, :, ::-1] 
+            
+            return Image.fromarray(frame_rgb)
         except Exception:
             return None
 
