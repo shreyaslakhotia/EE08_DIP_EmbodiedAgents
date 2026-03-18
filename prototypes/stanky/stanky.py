@@ -317,31 +317,29 @@ class StudyBuddyApp:
     def proactive_heartbeat_loop(self):
         """Runs in the background, checking the user's state every 60 seconds."""
         while self.running:
-            # Wait 60 seconds between checks so we don't spam the MacBook or overheat the Pi
             time.sleep(60) 
             
-            # Only interrupt if the AI isn't already talking or processing a direct question
             if not self.processing and self.current_frame_img:
+                # 1. LOCK THE SYSTEM: Prevent voice/text inputs while checking
+                self.processing = True 
+                
                 print("[HEARTBEAT] Analyzing user state...")
-                
-                # Secretly grab a frame
                 temp_path = self.vision.save_frame(self.current_frame_img, "heartbeat_temp.jpg")
-                
-                # Ask the Mac what it sees
                 analysis = self.brain.silent_observe(temp_path)
                 
-                # If the AI decided to say something (didn't return SILENCE)
                 if analysis and "SILENCE" not in analysis.upper():
                     self.set_status("💡 PROACTIVE INTERVENTION!")
                     self.chat_log.insert(tk.END, f"\nAgent (Proactive): {analysis}\n\n")
                     self.chat_log.see(tk.END)
                     self.audio.speak(analysis)
-                    
-                    # Optional: Add it to the main history so the bot remembers initiating the chat
                     self.brain.history.append({'role': 'assistant', 'content': analysis})
                     
-                time.sleep(5) # Brief pause before resetting status
+                    time.sleep(5) # Brief pause before resetting status
+                    
                 self.set_status("READY")
+                
+                # 2. UNLOCK THE SYSTEM: Allow normal chat again
+                self.processing = False
 
     def shutdown(self):
         self.running = False
