@@ -16,8 +16,8 @@ import re
 # ==========================================
 # CONFIGURATION
 # ==========================================
-MAC_IP = "10.91.10.229"  # <-- CHANGE THIS TO YOUR MACBOOK'S IP
-MODEL_NAME = "stanky"
+MAC_IP = "10.91.242.226"  # <-- CHANGE THIS TO YOUR MACBOOK'S IP
+MODEL_NAME = "stanky2"
 
 
 # ==========================================
