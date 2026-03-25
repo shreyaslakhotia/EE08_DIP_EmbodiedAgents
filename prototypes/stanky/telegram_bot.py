@@ -65,8 +65,10 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     history.append({"role": "user", "content": user_text})
     _truncate_history(history)
 
+    import asyncio
     try:
-        reply = await context.application.run_in_executor(
+        loop = asyncio.get_running_loop()
+        reply = await loop.run_in_executor(
             None, generate_response, list(history)
         )
         history.append({"role": "assistant", "content": reply})
