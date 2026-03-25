@@ -16,7 +16,8 @@ import re
 # ==========================================
 # CONFIGURATION
 # ==========================================
-MAC_IP = "10.91.242.226"  # <-- CHANGE THIS TO YOUR MACBOOK'S IP
+MAC_HOSTNAME = "Ongs-MacBook-Pro.local"
+MAC_IP = MAC_HOSTNAME
 MODEL_NAME = "stanky2"
 
 
@@ -30,23 +31,21 @@ class RemoteBrain:
         self.model = model
         self.history = [{'role': 'system', 'content': 'You are an embodied Study Buddy. Provide concise, helpful answers.'}]
 
-    def generate_response_stream(self, user_text, image_path=None):
-        """Yields tokens synchronously via raw REST API. No asyncio needed."""
+def generate_response_stream(self, user_text, image_path=None):
+        """Yields tokens with built-in retries for robotic resilience."""
         images_b64 = []
         if image_path:
             try:
-                # The Ollama API requires raw base64 strings for images
                 with open(image_path, "rb") as img_file:
                     b64_string = base64.b64encode(img_file.read()).decode('utf-8')
                     images_b64.append(b64_string)
             except Exception as e:
                 print(f"Image Encoding Error: {e}")
 
-        # Construct the message payload
+        # 1. Append the user message to history ONCE before the retry loop
         message = {'role': 'user', 'content': user_text}
         if images_b64:
             message['images'] = images_b64
-            
         self.history.append(message)
         
         payload = {
@@ -56,25 +55,41 @@ class RemoteBrain:
             "keep_alive": -1
         }
         
+        max_retries = 3
         full_reply = ""
-        try:
-            # Pure synchronous HTTP POST request. Immune to asyncio crashes.
-            with requests.post(self.server_url, json=payload, stream=True) as response:
-                response.raise_for_status()
-                
-                for line in response.iter_lines():
-                    if line:
-                        chunk = json.loads(line)
-                        if "message" in chunk and "content" in chunk["message"]:
-                            token = chunk["message"]["content"]
-                            full_reply += token
-                            yield token
 
-            self.history.append({'role': 'assistant', 'content': full_reply})
-            self._clean_history()
-            
-        except Exception as e:
-            yield f"\n[NETWORK ERROR: Cannot reach MacBook at {MAC_IP}. Details: {e}]"
+        # 2. Start the Retry Loop
+        for attempt in range(max_retries):
+            try:
+                # Added a timeout (10s to connect, 30s for the first token)
+                with requests.post(self.server_url, json=payload, stream=True, timeout=(10, 30)) as response:
+                    response.raise_for_status()
+                    
+                    for line in response.iter_lines():
+                        if line:
+                            chunk = json.loads(line)
+                            if "message" in chunk and "content" in chunk["message"]:
+                                token = chunk["message"]["content"]
+                                full_reply += token
+                                yield token
+
+                # 3. SUCCESS: If we get here, the stream finished. Update history and EXIT.
+                self.history.append({'role': 'assistant', 'content': full_reply})
+                self._clean_history()
+                return 
+
+            except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+                # 4. FAILURE: If it's not the last attempt, wait and try again
+                if attempt < max_retries - 1:
+                    wait_time = 2 * (attempt + 1) # Exponential-ish backoff
+                    yield f"\n[Signal weak... retrying in {wait_time}s (Attempt {attempt + 1}/{max_retries})]"
+                    time.sleep(wait_time)
+                else:
+                    # Final failure
+                    yield f"\n[OFFLINE: TARS cannot reach the MacBook. Check the server at {MAC_IP}.]"
+                    # Remove the failed message from history so the context stays clean
+                    if self.history and self.history[-1]['role'] == 'user':
+                        self.history.pop()
 
     def _clean_history(self):
         """Removes heavy image payloads from past messages to prevent network lag."""
