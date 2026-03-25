@@ -10,6 +10,8 @@ This project builds an **emotionally aware study buddy robot** — an embodied A
 
 The core model is [**Qwen2.5-VL-3B**](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct) fine-tuned with **QLoRA** on the FER-2013 facial expression dataset, then quantised to **GGUF Q4\_K\_M** (~3.1 GB) for efficient on-device inference via [Ollama](https://ollama.com/).
 
+In addition to the embodied interface, the project includes a **Telegram bot interface** that connects to the same Ollama backend through a shared `brain_client.py`. This provides a lightweight remote interaction mode for demos, testing, and quick iteration when Pi hardware is not being used.
+
 ---
 
 ## Key Components
@@ -20,6 +22,7 @@ The core model is [**Qwen2.5-VL-3B**](https://huggingface.co/Qwen/Qwen2.5-VL-3B-
 | **Multimodal Reasoning** | Qwen2.5-VL-3B performs joint emotion classification + empathetic response generation in a single forward pass |
 | **Speech Interface** | Whisper / faster-whisper (INT8) for speech-to-text; gTTS / eSpeak for text-to-speech |
 | **Robot Interaction** | Tkinter GUI with live video feed, voice input, and text chat on Raspberry Pi |
+| **Telegram Interface (Additional Feature)** | Polling Telegram bot on MacBook using the same model backend via shared `brain_client.py` |
 | **Hardware Sensing** | PIR motion sensor (GPIO) triggers camera capture for hands-free activation |
 | **Fine-Tuning Pipeline** | End-to-end QLoRA training, GGUF export, and evaluation scripts |
 
@@ -30,6 +33,11 @@ The model recognises **7 facial expressions**: `angry` · `disgust` · `fear` ·
 ---
 
 ## System Architecture
+
+The project supports two complementary interaction modes over the same model backend:
+
+1. **Embodied Mode (Pi + sensors + GUI + voice)**
+2. **Telegram Mode (remote text chat via bot on MacBook)**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -51,6 +59,21 @@ The model recognises **7 facial expressions**: `angry` · `disgust` · `fear` ·
 │                     Ollama Runtime                          │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### Additional Telegram Interface Path
+
+```
+User (Telegram App) ──▶ Telegram Bot (MacBook, polling)
+                             │
+                             ▼
+                    brain_client.py (shared)
+                             │
+                             ▼
+          Ollama /api/chat (same Study Buddy model backend)
+```
+
+Telegram interface details and run steps are documented in:
+`prototypes/stanky/TELEGRAM_BOT_README.md`
 
 ---
 
@@ -163,6 +186,7 @@ The project went through multiple development stages, each adding new capabiliti
 | **Stage 1.0–1.5** | `prototypes/qwen3_vl_4b/Stage1_Milestones/` | Incremental modality integration on macOS: text chat → vision → voice (Whisper) → combined GUI with TTS → async streaming |
 | **Stage 2.0** | `prototypes/qwen3_vl_4b/Stage2_Milestones/` | Platform-specific builds (macOS / Raspberry Pi), live video feed, distributed Pi → Mac inference |
 | **Stage 2.1** | `prototypes/qwen3_vl_4b/stage2.1_linux_oop.py` | Final OOP architecture — 4 modular classes: `RemoteBrain`, `VisionSystem`, `AudioSystem`, `StudyBuddyApp` |
+| **Telegram Interface** | `prototypes/stanky/` | Additional remote interface using shared `brain_client.py` + `telegram_bot.py` (text chat via polling) |
 | **Hardware Tests** | `prototypes/modular_codes/` | Standalone tests for Pi Camera, PIR motion sensor (GPIO), and Ollama API |
 | **Fine-Tuning** | `finetuning/` | QLoRA on FER-2013 → GGUF export → standalone on-device inference (no Mac server needed) |
 
@@ -195,6 +219,11 @@ The project went through multiple development stages, each adding new capabiliti
 │   │   ├── Stage2_Milestones/         #     Platform-specific + distributed inference
 │   │   ├── Troubleshooting codes/     #     Benchmarking & debugging utilities
 │   │   └── stage2.1_linux_oop.py      #     Final OOP architecture
+│   ├── stanky/                        #   Telegram + Pi-client integration prototype
+│   │   ├── brain_client.py            #     Shared Ollama API client (stateless)
+│   │   ├── telegram_bot.py            #     Telegram polling interface (text-only)
+│   │   ├── TELEGRAM_BOT_README.md     #     Telegram setup and usage guide
+│   │   └── stanky.py                  #     Pi app wired to shared brain client
 │   └── modular_codes/                 #   Camera, PIR sensor, Ollama hardware tests
 │
 ├── scripts/                           # GPU server training infrastructure
