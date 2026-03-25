@@ -12,6 +12,7 @@ import json
 import time
 import os
 import re
+from face_controller import FaceController
 
 # ==========================================
 # CONFIGURATION
@@ -19,6 +20,10 @@ import re
 MAC_HOSTNAME = "Ongs-MacBook-Pro.local"
 MAC_IP = MAC_HOSTNAME
 MODEL_NAME = "stanky2"
+TELEGRAM_REDIRECT_TEXT = (
+    "this would be easier to explain properly on the Telegram interface where I can "
+    "format things clearly. send it there and I'll walk you through it step by step."
+)
 
 
 # ==========================================
@@ -31,7 +36,7 @@ class RemoteBrain:
         self.model = model
         self.history = [{'role': 'system', 'content': 'You are an embodied Study Buddy. Provide concise, helpful answers.'}]
 
-def generate_response_stream(self, user_text, image_path=None):
+    def generate_response_stream(self, user_text, image_path=None):
         """Yields tokens with built-in retries for robotic resilience."""
         images_b64 = []
         if image_path:
@@ -201,20 +206,29 @@ class AudioSystem:
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         return cleaned
 
-    def speak(self, text):
+    def speak(self, text, on_start=None, on_end=None):
         def run_speech():
             cleaned_text = self._clean_for_speech(text)
             if not cleaned_text:
+                if callable(on_end):
+                    on_end()
                 return 
             try:
+                if callable(on_start):
+                    on_start()
                 tts = gTTS(text=cleaned_text, lang='en', tld='com')
                 audio_file = "speech.mp3"
                 tts.save(audio_file)
                 os.system(f"mpg123 -q {audio_file}")
             except Exception as e:
                 print(f"TTS Error: {e}")
+            finally:
+                if callable(on_end):
+                    on_end()
                 
-        threading.Thread(target=run_speech, daemon=True).start()
+        speech_thread = threading.Thread(target=run_speech, daemon=True)
+        speech_thread.start()
+        return speech_thread
 
 
 # ==========================================
@@ -230,6 +244,13 @@ class StudyBuddyApp:
         self.brain = RemoteBrain(server_ip=MAC_IP, model=MODEL_NAME)
         self.vision = VisionSystem()
         self.audio = AudioSystem()
+        self.face = FaceController(
+            width=480,
+            height=320,
+            debug_output_dir="face_debug",
+            save_debug_frames=True,
+        )
+        self.face.set_idle()
 
         self.running = True
         self.processing = False
@@ -304,8 +325,41 @@ class StudyBuddyApp:
         # Start a standard thread. No asyncio loops at all.
         threading.Thread(target=self.process_ai_stream, args=(text,), daemon=True).start()
 
+    def _should_redirect_to_telegram(self, text):
+        lower = (text or "").lower()
+        redirect_keywords = [
+            "code",
+            "equation",
+            "derive",
+            "proof",
+            "formula",
+            "step by step",
+            "debug",
+            "algorithm",
+            "syntax",
+            "explain in detail",
+        ]
+        return any(keyword in lower for keyword in redirect_keywords)
+
+    def _tts_finish_face_state(self):
+        self.face.stop_talking()
+        self.face.set_idle()
+
     def process_ai_stream(self, text):
         """Handles vision routing and processes the network stream synchronously."""
+        if self._should_redirect_to_telegram(text):
+            self.chat_log.insert(tk.END, f"Agent: {TELEGRAM_REDIRECT_TEXT}\n\n")
+            self.chat_log.see(tk.END)
+            self.face.set_expression("thinking")
+            self.audio.speak(
+                TELEGRAM_REDIRECT_TEXT,
+                on_start=self.face.start_talking,
+                on_end=self._tts_finish_face_state,
+            )
+            self.processing = False
+            self.set_status("READY")
+            return
+
         vision_keywords = ["look", "see", "show", "analyze", "watch"]
         image_path = None
         
@@ -324,7 +378,13 @@ class StudyBuddyApp:
             self.chat_log.see(tk.END)
 
         self.chat_log.insert(tk.END, "\n\n")
-        self.audio.speak(full_reply)
+        emotion = self.face.get_emotion_from_text(full_reply)
+        self.face.set_expression(emotion)
+        self.audio.speak(
+            full_reply,
+            on_start=self.face.start_talking,
+            on_end=self._tts_finish_face_state,
+        )
         
         self.processing = False
         self.set_status("READY")
@@ -346,7 +406,13 @@ class StudyBuddyApp:
                     self.set_status("💡 PROACTIVE INTERVENTION!")
                     self.chat_log.insert(tk.END, f"\nAgent (Proactive): {analysis}\n\n")
                     self.chat_log.see(tk.END)
-                    self.audio.speak(analysis)
+                    emotion = self.face.get_emotion_from_text(analysis)
+                    self.face.set_expression(emotion)
+                    self.audio.speak(
+                        analysis,
+                        on_start=self.face.start_talking,
+                        on_end=self._tts_finish_face_state,
+                    )
                     self.brain.history.append({'role': 'assistant', 'content': analysis})
                     
                     time.sleep(5) # Brief pause before resetting status
@@ -358,6 +424,7 @@ class StudyBuddyApp:
 
     def shutdown(self):
         self.running = False
+        self.face.shutdown()
         self.vision.shutdown()
         self.root.destroy()
 
