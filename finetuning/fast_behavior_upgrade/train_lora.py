@@ -19,6 +19,7 @@ Notes:
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import random
 from dataclasses import dataclass
@@ -29,13 +30,13 @@ import torch
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from PIL import Image
 from torch.utils.data import Dataset
-from transformers import (
-    AutoModelForVision2Seq,
-    AutoProcessor,
-    BitsAndBytesConfig,
-    Trainer,
-    TrainingArguments,
-)
+from transformers import AutoProcessor, BitsAndBytesConfig, Trainer, TrainingArguments
+
+try:
+    from transformers import AutoModelForVision2Seq as AutoVisionModel
+except ImportError:
+    # Transformers v5+ may expose this task under a different auto class name.
+    from transformers import AutoModelForImageTextToText as AutoVisionModel
 
 
 def read_jsonl(path: Path) -> List[dict]:
@@ -145,8 +146,7 @@ class VisionCollator:
                 text=[full_text],
                 images=[image],
                 padding=False,
-                truncation=True,
-                max_length=self.max_length,
+                truncation=False,
                 return_tensors="pt",
             )
 
@@ -154,8 +154,7 @@ class VisionCollator:
                 text=[prompt_text],
                 images=[image],
                 padding=False,
-                truncation=True,
-                max_length=self.max_length,
+                truncation=False,
                 return_tensors="pt",
             )
 
@@ -244,13 +243,36 @@ def build_model_and_processor(
             bnb_4bit_compute_dtype=torch.float16,
         )
 
-    model = AutoModelForVision2Seq.from_pretrained(
-        model_name_or_path,
-        torch_dtype=torch.float16,
-        quantization_config=bnb_config,
-        device_map="auto",
-        trust_remote_code=True,
-    )
+    model_load_kwargs = {
+        "trust_remote_code": True,
+        "torch_dtype": torch.float16,
+        "quantization_config": bnb_config,
+        "device_map": "auto",
+    }
+
+    try:
+        model = AutoVisionModel.from_pretrained(
+            model_name_or_path,
+            **model_load_kwargs,
+        )
+    except ValueError as exc:
+        # Some environments have transformers versions where qwen2_5_vl is not
+        # registered in AutoConfig/AutoModel mapping yet.
+        if "model type `qwen2_5_vl`" not in str(exc):
+            raise
+
+        try:
+            from transformers import Qwen2_5_VLForConditionalGeneration
+        except Exception as import_exc:
+            raise RuntimeError(
+                "Your Transformers build cannot load model_type 'qwen2_5_vl'. "
+                "Please upgrade transformers (recommended >=4.50) and retry."
+            ) from import_exc
+
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            model_name_or_path,
+            **model_load_kwargs,
+        )
 
     processor = AutoProcessor.from_pretrained(model_name_or_path, trust_remote_code=True)
 
@@ -351,32 +373,40 @@ def main() -> int:
     val_ds = JsonlVisionDataset(val_records)
     collator = VisionCollator(processor=processor, max_length=args.max_length)
 
-    training_args = TrainingArguments(
-        output_dir=str(args.output_dir),
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        per_device_eval_batch_size=args.per_device_eval_batch_size,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        warmup_ratio=args.warmup_ratio,
-        logging_steps=args.logging_steps,
-        save_steps=args.save_steps,
-        eval_steps=args.eval_steps,
-        evaluation_strategy="steps" if len(val_ds) > 0 else "no",
-        save_strategy="steps",
-        fp16=True,
-        bf16=False,
-        report_to="none",
-        remove_unused_columns=False,
-        dataloader_num_workers=2,
-        dataloader_pin_memory=True,
-        save_total_limit=args.save_total_limit,
-        load_best_model_at_end=len(val_ds) > 0,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
-        logging_first_step=True,
-    )
+    ta_kwargs = {
+        "output_dir": str(args.output_dir),
+        "num_train_epochs": args.epochs,
+        "per_device_train_batch_size": args.per_device_train_batch_size,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "per_device_eval_batch_size": args.per_device_eval_batch_size,
+        "learning_rate": args.learning_rate,
+        "weight_decay": args.weight_decay,
+        "warmup_ratio": args.warmup_ratio,
+        "logging_steps": args.logging_steps,
+        "save_steps": args.save_steps,
+        "eval_steps": args.eval_steps,
+        "save_strategy": "steps",
+        "fp16": True,
+        "bf16": False,
+        "report_to": "none",
+        "remove_unused_columns": False,
+        "dataloader_num_workers": 2,
+        "dataloader_pin_memory": True,
+        "save_total_limit": args.save_total_limit,
+        "load_best_model_at_end": len(val_ds) > 0,
+        "metric_for_best_model": "eval_loss",
+        "greater_is_better": False,
+        "logging_first_step": True,
+    }
+
+    eval_strategy_value = "steps" if len(val_ds) > 0 else "no"
+    ta_params = inspect.signature(TrainingArguments.__init__).parameters
+    if "evaluation_strategy" in ta_params:
+        ta_kwargs["evaluation_strategy"] = eval_strategy_value
+    elif "eval_strategy" in ta_params:
+        ta_kwargs["eval_strategy"] = eval_strategy_value
+
+    training_args = TrainingArguments(**ta_kwargs)
 
     trainer = Trainer(
         model=model,

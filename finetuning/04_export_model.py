@@ -33,9 +33,9 @@ torch._dynamo.config.suppress_errors = True
 
 
 # ─── Configuration ──────────────────────────────────────────────────────────────
-CHECKPOINT_DIR = Path("/mlda/shreyas_projects/EE08_DIP_EmbodiedAgents/checkpoints/qwen3vl_studybuddy/final")
-MERGED_DIR = Path("/mlda/shreyas_projects/EE08_DIP_EmbodiedAgents/checkpoints/qwen3vl_studybuddy/merged")
-EXPORT_DIR = Path("/mlda/shreyas_projects/EE08_DIP_EmbodiedAgents/checkpoints/qwen3vl_studybuddy/export")
+CHECKPOINT_DIR = Path("/mlda/shreyas_projects/EE08_DIP_EmbodiedAgents/finetuning/fast_behavior_upgrade/outputs/run_20260328_153038/adapter")
+MERGED_DIR = Path("/mlda/shreyas_projects/EE08_DIP_EmbodiedAgents/finetuning/fast_behavior_upgrade/outputs/run_20260328_153038/merged")
+EXPORT_DIR = Path("/mlda/shreyas_projects/EE08_DIP_EmbodiedAgents/finetuning/fast_behavior_upgrade/outputs/run_20260328_153038/gguf_export")
 BASE_MODEL = "Qwen/Qwen2.5-VL-3B-Instruct"
 
 

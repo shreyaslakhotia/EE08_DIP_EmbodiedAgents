@@ -15,7 +15,12 @@ from typing import List
 import torch
 from peft import PeftModel
 from PIL import Image
-from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
+from transformers import AutoProcessor, BitsAndBytesConfig
+
+try:
+    from transformers import AutoModelForVision2Seq as AutoVisionModel
+except ImportError:
+    from transformers import AutoModelForImageTextToText as AutoVisionModel
 
 
 def read_jsonl(path: Path, max_samples: int) -> List[dict]:
@@ -50,7 +55,7 @@ def main() -> int:
             bnb_4bit_compute_dtype=torch.float16,
         )
 
-    base_model = AutoModelForVision2Seq.from_pretrained(
+    base_model = AutoVisionModel.from_pretrained(
         args.base_model,
         torch_dtype=torch.float16,
         device_map="auto",
