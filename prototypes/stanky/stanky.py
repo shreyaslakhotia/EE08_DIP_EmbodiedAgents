@@ -151,13 +151,16 @@ class VisionSystem:
         try:
             # Grab the raw array from the camera
             frame = self.picam2.capture_array("main")
-            
-            # THE FIX: Reverse the color channels from BGR to RGB
-            # This uses standard Numpy slicing to flip the 3rd dimension (colors)
-            frame_rgb = frame[:, :, ::-1] 
-            
-            return Image.fromarray(frame_rgb)
-        except Exception:
+
+            # If the camera already gives RGB, skip swap; if BGR, convert.
+            # Many PiCamera configs produce RGB, so this is safe either way.
+            frame_rgb = frame[:, :, ::-1]
+
+            img = Image.fromarray(frame_rgb)
+            return img.rotate(-90, expand=True)
+
+        except Exception as e:
+            print(f"Vision capture error: {e}")
             return None
 
     def save_frame(self, img_obj, filepath="vision_temp.jpg"):
@@ -292,7 +295,7 @@ class StudyBuddyApp:
                 img = self.vision.get_current_frame()
                 if img:
                     self.current_frame_img = img.copy()
-                    img_gui = img.resize((400, 300))
+                    img_gui = img.resize((300, 400))
                     imgtk = ImageTk.PhotoImage(image=img_gui)
                     self.vid_label.imgtk = imgtk
                     self.vid_label.configure(image=imgtk)
