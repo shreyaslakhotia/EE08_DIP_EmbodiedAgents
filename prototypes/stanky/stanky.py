@@ -90,7 +90,7 @@ class RemoteBrain:
                     time.sleep(wait_time)
                 else:
                     # Final failure
-                    yield f"\n[OFFLINE: TARS cannot reach the MacBook. Check the server at {MAC_IP}.]"
+                    yield f"\n[OFFLINE: AI cannot reach the MacBook. Check the server at {MAC_IP}.]"
                     # Remove the failed message from history so the context stays clean
                     if self.history and self.history[-1]['role'] == 'user':
                         self.history.pop()
@@ -157,7 +157,7 @@ class VisionSystem:
             frame_rgb = frame[:, :, ::-1]
 
             img = Image.fromarray(frame_rgb)
-            return img.rotate(-90, expand=True)
+            return img.rotate(90, expand=True)
 
         except Exception as e:
             print(f"Vision capture error: {e}")
