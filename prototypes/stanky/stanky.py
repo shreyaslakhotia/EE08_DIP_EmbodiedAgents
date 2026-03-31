@@ -17,9 +17,8 @@ from face_controller import FaceController
 # ==========================================
 # CONFIGURATION
 # ==========================================
-MAC_HOSTNAME = "Ongs-MacBook-Pro.local"
-MAC_IP = MAC_HOSTNAME
-MODEL_NAME = "stanky2"
+MAC_IP = "10.91.143.5"  # Replace with your MacBook's IP address
+MODEL_NAME = "stanky3"
 TELEGRAM_REDIRECT_TEXT = (
     "this would be easier to explain properly on the Telegram interface where I can "
     "format things clearly. send it there and I'll walk you through it step by step."
