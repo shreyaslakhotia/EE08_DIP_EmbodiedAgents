@@ -208,22 +208,27 @@ class AudioSystem:
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         return cleaned
 
-    def speak(self, text):
-            """Now blocks the thread until the audio finishes playing."""
+    def speak(self, text, **kwargs): # The **kwargs catches 'on_start' or any other extras
+            """Blocks the thread until speech finishes, safely ignoring extra arguments."""
             cleaned_text = self._clean_for_speech(text)
             if not cleaned_text:
                 return 
+                
             try:
+                # If an 'on_start' function was passed, run it now!
+                if 'on_start' in kwargs and callable(kwargs['on_start']):
+                    kwargs['on_start']()
+
                 tts = gTTS(text=cleaned_text, lang='en', tld='com')
                 audio_file = "speech.mp3"
                 tts.save(audio_file)
                 
-                # This line is 'blocking' - it waits for the MP3 to finish
+                # This line 'blocks' the thread until the MP3 is done playing
                 os.system(f"mpg123 -q {audio_file}")
                 
-                # Optional: remove the file after playing to keep the Pi clean
                 if os.path.exists(audio_file):
                     os.remove(audio_file)
+                    
             except Exception as e:
                 print(f"TTS Error: {e}")
 
