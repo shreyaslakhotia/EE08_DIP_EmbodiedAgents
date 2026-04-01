@@ -184,21 +184,40 @@ class AudioSystem:
         self.recognizer = sr.Recognizer()
         self.recognizer.pause_threshold = 0.5
 
-    def listen(self, status_callback):
+    def listen(self, status_callback, app_instance): 
+        """Listens for audio, but ignores it if the AI is currently speaking."""
         with sr.Microphone() as source:
             status_callback("LISTENING...")
+            # Help the mic ignore background hum
             self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            
             try:
+                # Capture the audio from the mic
                 audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=8)
+                
+                # --- THE LOCK CHECK ---
+                # If the AI started talking (heartbeat or reply) while we were 
+                # recording, discard this audio immediately.
+                if app_instance.processing:
+                    print("[AUDIO] Ignored: AI was speaking during recording.")
+                    return None
+
                 status_callback("TRANSCRIBING...")
                 with open("temp.wav", "wb") as f:
                     f.write(audio.get_wav_data())
                 
                 segments, _ = self.whisper_model.transcribe("temp.wav", beam_size=1)
                 text = " ".join([segment.text for segment in segments])
+                
+                # --- THE FINAL LOCK CHECK ---
+                # Double-check one last time before returning the text.
+                if app_instance.processing:
+                    return None
+                    
                 return text.strip()
+                
             except Exception as e:
-                print(f"Voice Error: {e}")
+                print(f"Listen Error: {e}")
                 return None
 
     def _clean_for_speech(self, text):
@@ -306,15 +325,16 @@ class StudyBuddyApp:
         self.status.config(text=f"STATUS: {msg}")
 
     def voice_loop(self):
-            while self.running:
-                # Only listen if the system is totally idle
-                if not self.processing:
-                    user_text = self.audio.listen(self.set_status, self)
-                    # Ensure the system didn't BECOME busy while we were listening
-                    if user_text and len(user_text) > 4 and not self.processing:
-                        self.trigger_ai_interaction(user_text)
-                time.sleep(0.5)
+        while self.running:
+            if not self.processing:
+                # We pass 'self' (the StudyBuddyApp) as the 3rd argument
+                user_text = self.audio.listen(self.set_status, self)
                 
+                if user_text and len(user_text) > 4 and not self.processing:
+                    self.trigger_ai_interaction(user_text)
+            
+            time.sleep(0.3) # Give the CPU a tiny breather
+
     def handle_input(self):
             if self.processing:
                 return # Do nothing if already thinking
