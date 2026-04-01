@@ -208,29 +208,24 @@ class AudioSystem:
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         return cleaned
 
-    def speak(self, text, on_start=None, on_end=None):
-        def run_speech():
+    def speak(self, text):
+            """Now blocks the thread until the audio finishes playing."""
             cleaned_text = self._clean_for_speech(text)
             if not cleaned_text:
-                if callable(on_end):
-                    on_end()
                 return 
             try:
-                if callable(on_start):
-                    on_start()
                 tts = gTTS(text=cleaned_text, lang='en', tld='com')
                 audio_file = "speech.mp3"
                 tts.save(audio_file)
+                
+                # This line is 'blocking' - it waits for the MP3 to finish
                 os.system(f"mpg123 -q {audio_file}")
+                
+                # Optional: remove the file after playing to keep the Pi clean
+                if os.path.exists(audio_file):
+                    os.remove(audio_file)
             except Exception as e:
                 print(f"TTS Error: {e}")
-            finally:
-                if callable(on_end):
-                    on_end()
-                
-        speech_thread = threading.Thread(target=run_speech, daemon=True)
-        speech_thread.start()
-        return speech_thread
 
 
 # ==========================================
@@ -387,43 +382,36 @@ class StudyBuddyApp:
             on_start=self.face.start_talking,
             on_end=self._tts_finish_face_state,
         )
+
+        self.set_status("🗣️ SPEAKING...")
+        
+        # This line now waits until the audio is finished!
+        self.audio.speak(full_reply)
         
         self.processing = False
         self.set_status("READY")
 
-    def proactive_heartbeat_loop(self):
-        """Runs in the background, checking the user's state every 60 seconds."""
+def proactive_heartbeat_loop(self):
         while self.running:
             time.sleep(60) 
-            
             if not self.processing and self.current_frame_img:
-                # 1. LOCK THE SYSTEM: Prevent voice/text inputs while checking
-                self.processing = True 
+                self.processing = True # LOCK THE MIC
                 
-                print("[HEARTBEAT] Analyzing user state...")
                 temp_path = self.vision.save_frame(self.current_frame_img, "heartbeat_temp.jpg")
                 analysis = self.brain.silent_observe(temp_path)
                 
                 if analysis and "SILENCE" not in analysis.upper():
-                    self.set_status("💡 PROACTIVE INTERVENTION!")
+                    self.set_status("💡 INTERVENING...")
                     self.chat_log.insert(tk.END, f"\nAgent (Proactive): {analysis}\n\n")
-                    self.chat_log.see(tk.END)
-                    emotion = self.face.get_emotion_from_text(analysis)
-                    self.face.set_expression(emotion)
-                    self.audio.speak(
-                        analysis,
-                        on_start=self.face.start_talking,
-                        on_end=self._tts_finish_face_state,
-                    )
+                    
+                    # Blocks here until speech is done
+                    self.audio.speak(analysis) 
+                    
                     self.brain.history.append({'role': 'assistant', 'content': analysis})
-                    
-                    time.sleep(5) # Brief pause before resetting status
-                    
-                self.set_status("READY")
-                
-                # 2. UNLOCK THE SYSTEM: Allow normal chat again
-                self.processing = False
 
+                self.processing = False # UNLOCK THE MIC
+                self.set_status("READY")
+x
     def shutdown(self):
         self.running = False
         self.face.shutdown()
