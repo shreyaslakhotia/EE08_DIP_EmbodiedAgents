@@ -306,26 +306,38 @@ class StudyBuddyApp:
         self.status.config(text=f"STATUS: {msg}")
 
     def voice_loop(self):
-        while self.running:
-            if not self.processing:
-                user_text = self.audio.listen(self.set_status)
-                if user_text and len(user_text) > 4:
-                    self.trigger_ai_interaction(user_text)
-
+            while self.running:
+                # Only listen if the system is totally idle
+                if not self.processing:
+                    user_text = self.audio.listen(self.set_status, self)
+                    # Ensure the system didn't BECOME busy while we were listening
+                    if user_text and len(user_text) > 4 and not self.processing:
+                        self.trigger_ai_interaction(user_text)
+                time.sleep(0.5)
+                
     def handle_input(self):
-        text = self.user_entry.get().strip()
-        if text and not self.processing:
-            self.user_entry.delete(0, tk.END)
-            self.trigger_ai_interaction(text)
+            if self.processing:
+                return # Do nothing if already thinking
+                
+            text = self.user_entry.get().strip()
+            if text:
+                self.user_entry.delete(0, tk.END) # Clear the box IMMEDIATELY
+                self.trigger_ai_interaction(text)
 
     def trigger_ai_interaction(self, text):
-        """Bridges the Tkinter UI to the background network thread. NO ASYNC."""
-        self.processing = True
-        self.chat_log.insert(tk.END, f"You: {text}\n\n")
-        self.chat_log.see(tk.END)
+            """Bridges the Tkinter UI to the background network thread."""
+            # --- FIX 1: LOCK IMMEDIATELY ---
+            if self.processing:
+                return # Block any second trigger attempts
+                
+            self.processing = True 
+            self.set_status("THINKING...")
+            
+            self.chat_log.insert(tk.END, f"You: {text}\n\n")
+            self.chat_log.see(tk.END)
 
-        # Start a standard thread. No asyncio loops at all.
-        threading.Thread(target=self.process_ai_stream, args=(text,), daemon=True).start()
+            # Now start the thread, but the flag is already True
+            threading.Thread(target=self.process_ai_stream, args=(text,), daemon=True).start()
 
     def _should_redirect_to_telegram(self, text):
         lower = (text or "").lower()
@@ -389,10 +401,20 @@ class StudyBuddyApp:
         )
 
         self.set_status("🗣️ SPEAKING...")
-        
+
+        # Check if the 'user' text is identical to the last AI response
+        if self.brain.history and self.brain.history[-1]['role'] == 'assistant':
+            last_ai_words = self.brain.history[-1]['content'].strip().lower()
+            if text.strip().lower() == last_ai_words:
+                print("[DEBUG] Blocked an echo repeat.")
+                self.processing = False
+                self.set_status("READY")
+                return
+            
         # This line now waits until the audio is finished!
         self.audio.speak(full_reply)
         
+        time.sleep(1.0)
         self.processing = False
         self.set_status("READY")
 
