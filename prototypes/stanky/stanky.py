@@ -391,27 +391,27 @@ class StudyBuddyApp:
         self.processing = False
         self.set_status("READY")
 
-def proactive_heartbeat_loop(self):
-        while self.running:
-            time.sleep(60) 
-            if not self.processing and self.current_frame_img:
-                self.processing = True # LOCK THE MIC
-                
-                temp_path = self.vision.save_frame(self.current_frame_img, "heartbeat_temp.jpg")
-                analysis = self.brain.silent_observe(temp_path)
-                
-                if analysis and "SILENCE" not in analysis.upper():
-                    self.set_status("💡 INTERVENING...")
-                    self.chat_log.insert(tk.END, f"\nAgent (Proactive): {analysis}\n\n")
+    def proactive_heartbeat_loop(self):
+            while self.running:
+                time.sleep(60) 
+                if not self.processing and self.current_frame_img:
+                    self.processing = True # LOCK THE MIC
                     
-                    # Blocks here until speech is done
-                    self.audio.speak(analysis) 
+                    temp_path = self.vision.save_frame(self.current_frame_img, "heartbeat_temp.jpg")
+                    analysis = self.brain.silent_observe(temp_path)
                     
-                    self.brain.history.append({'role': 'assistant', 'content': analysis})
+                    if analysis and "SILENCE" not in analysis.upper():
+                        self.set_status("💡 INTERVENING...")
+                        self.chat_log.insert(tk.END, f"\nAgent (Proactive): {analysis}\n\n")
+                        
+                        # Blocks here until speech is done
+                        self.audio.speak(analysis) 
+                        
+                        self.brain.history.append({'role': 'assistant', 'content': analysis})
 
-                self.processing = False # UNLOCK THE MIC
-                self.set_status("READY")
-x
+                    self.processing = False # UNLOCK THE MIC
+                    self.set_status("READY")
+
     def shutdown(self):
         self.running = False
         self.face.shutdown()
