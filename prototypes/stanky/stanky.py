@@ -227,29 +227,33 @@ class AudioSystem:
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         return cleaned
 
-    def speak(self, text, **kwargs): # The **kwargs catches 'on_start' or any other extras
-            """Blocks the thread until speech finishes, safely ignoring extra arguments."""
-            cleaned_text = self._clean_for_speech(text)
-            if not cleaned_text:
-                return 
-                
-            try:
-                # If an 'on_start' function was passed, run it now!
-                if 'on_start' in kwargs and callable(kwargs['on_start']):
-                    kwargs['on_start']()
+    def speak(self, text, **kwargs): 
+        """Blocks the thread until speech finishes, handling start/end callbacks."""
+        cleaned_text = self._clean_for_speech(text)
+        if not cleaned_text:
+            return 
+            
+        try:
+            # 1. Run 'on_start' (e.g., start moving the robot's mouth)
+            if 'on_start' in kwargs and callable(kwargs['on_start']):
+                kwargs['on_start']()
 
-                tts = gTTS(text=cleaned_text, lang='en', tld='com')
-                audio_file = "speech.mp3"
-                tts.save(audio_file)
+            tts = gTTS(text=cleaned_text, lang='en', tld='com')
+            audio_file = "speech.mp3"
+            tts.save(audio_file)
+            
+            # 2. Play audio (This blocks the thread until finished)
+            os.system(f"mpg123 -q {audio_file}")
+            
+            # 3. Run 'on_end' (e.g., stop moving the mouth)
+            if 'on_end' in kwargs and callable(kwargs['on_end']):
+                kwargs['on_end']()
+
+            if os.path.exists(audio_file):
+                os.remove(audio_file)
                 
-                # This line 'blocks' the thread until the MP3 is done playing
-                os.system(f"mpg123 -q {audio_file}")
-                
-                if os.path.exists(audio_file):
-                    os.remove(audio_file)
-                    
-            except Exception as e:
-                print(f"TTS Error: {e}")
+        except Exception as e:
+            print(f"TTS Error: {e}")
 
 
 # ==========================================
@@ -381,59 +385,67 @@ class StudyBuddyApp:
 
     def process_ai_stream(self, text):
         """Handles vision routing and processes the network stream synchronously."""
+        
+        # --- FIX 1: EARLY ECHO CHECK ---
+        # If the user text is exactly what the AI just said, stop immediately.
+        if self.brain.history and self.brain.history[-1]['role'] == 'assistant':
+            last_ai_words = self.brain.history[-1]['content'].strip().lower()
+            if text.strip().lower() == last_ai_words:
+                print("[DEBUG] Blocked an echo repeat at the start.")
+                self.processing = False
+                self.set_status("READY")
+                return
+
+        # --- FIX 2: TELEGRAM REDIRECT ---
         if self._should_redirect_to_telegram(text):
             self.chat_log.insert(tk.END, f"Agent: {TELEGRAM_REDIRECT_TEXT}\n\n")
             self.chat_log.see(tk.END)
             self.face.set_expression("thinking")
+            # Speak the redirect message
             self.audio.speak(
                 TELEGRAM_REDIRECT_TEXT,
                 on_start=self.face.start_talking,
                 on_end=self._tts_finish_face_state,
             )
+            time.sleep(1.0) # Echo cool-down
             self.processing = False
             self.set_status("READY")
             return
 
+        # --- FIX 3: VISION CHECK ---
         vision_keywords = ["look", "see", "show", "analyze", "watch"]
         image_path = None
-        
         if any(word in text.lower() for word in vision_keywords):
             self.set_status("📸 TRANSMITTING PHOTO...")
             image_path = self.vision.save_frame(self.current_frame_img)
 
+        # --- FIX 4: GENERATE RESPONSE ---
         self.set_status("📡 AWAITING MACBOOK...")
         self.chat_log.insert(tk.END, "Agent: ")
         
         full_reply = ""
-        # Standard synchronous for-loop processing the generator
         for token in self.brain.generate_response_stream(text, image_path):
             full_reply += token
             self.chat_log.insert(tk.END, token)
             self.chat_log.see(tk.END)
 
         self.chat_log.insert(tk.END, "\n\n")
+
+        # --- FIX 5: SINGLE SPEAK CALL ---
+        # Set the face expression based on the reply
         emotion = self.face.get_emotion_from_text(full_reply)
         self.face.set_expression(emotion)
+        self.set_status("🗣️ SPEAKING...")
+
+        # We call speak ONCE. It handles the mouth start/end and the audio.
         self.audio.speak(
             full_reply,
             on_start=self.face.start_talking,
             on_end=self._tts_finish_face_state,
         )
 
-        self.set_status("🗣️ SPEAKING...")
-
-        # Check if the 'user' text is identical to the last AI response
-        if self.brain.history and self.brain.history[-1]['role'] == 'assistant':
-            last_ai_words = self.brain.history[-1]['content'].strip().lower()
-            if text.strip().lower() == last_ai_words:
-                print("[DEBUG] Blocked an echo repeat.")
-                self.processing = False
-                self.set_status("READY")
-                return
-            
-        # This line now waits until the audio is finished!
-        self.audio.speak(full_reply)
-        
+        # --- FIX 6: COOL-DOWN ---
+        # Wait 1 second for the room to go quiet before allowing the mic to wake up
         time.sleep(1.0)
         self.processing = False
         self.set_status("READY")
