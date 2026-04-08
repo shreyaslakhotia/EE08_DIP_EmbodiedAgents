@@ -13,12 +13,14 @@ import time
 import os
 import re
 from face_controller import FaceController
+# --- HOOK 1: Import the motor logic ---
+from motor_controller import MotorController 
 
 # ==========================================
 # CONFIGURATION
 # ==========================================
-MAC_IP = "10.91.143.5"  # Replace with your MacBook's IP address
-MODEL_NAME = "stanky3"
+MAC_IP = "10.91.204.30"  # Replace with your MacBook's IP address
+MODEL_NAME = "qwen3-vl:2b-instruct-q4_k_m"
 TELEGRAM_REDIRECT_TEXT = (
     "this would be easier to explain properly on the Telegram interface where I can "
     "format things clearly. send it there and I'll walk you through it step by step."
@@ -33,7 +35,7 @@ class RemoteBrain:
     def __init__(self, server_ip, model):
         self.server_url = f"http://{server_ip}:11434/api/chat"
         self.model = model
-        self.history = [{'role': 'system', 'content': 'You are an embodied Study Buddy. Provide concise, helpful answers.'}]
+        self.history = [{'role': 'system', 'content': 'You are an embodied Study Buddy. Provide concise, helpful answers. If asked to follow, include the phrase *FOLLOW ME*. If asked to stop, include *STOP*.'}]
 
     def generate_response_stream(self, user_text, image_path=None):
         """Yields tokens with built-in retries for robotic resilience."""
@@ -196,8 +198,6 @@ class AudioSystem:
                 audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=8)
                 
                 # --- THE LOCK CHECK ---
-                # If the AI started talking (heartbeat or reply) while we were 
-                # recording, discard this audio immediately.
                 if app_instance.processing:
                     print("[AUDIO] Ignored: AI was speaking during recording.")
                     return None
@@ -209,8 +209,6 @@ class AudioSystem:
                 segments, _ = self.whisper_model.transcribe("temp.wav", beam_size=1)
                 text = " ".join([segment.text for segment in segments])
                 
-                # --- THE FINAL LOCK CHECK ---
-                # Double-check one last time before returning the text.
                 if app_instance.processing:
                     return None
                     
@@ -234,7 +232,6 @@ class AudioSystem:
             return 
             
         try:
-            # 1. Run 'on_start' (e.g., start moving the robot's mouth)
             if 'on_start' in kwargs and callable(kwargs['on_start']):
                 kwargs['on_start']()
 
@@ -242,10 +239,8 @@ class AudioSystem:
             audio_file = "speech.mp3"
             tts.save(audio_file)
             
-            # 2. Play audio (This blocks the thread until finished)
             os.system(f"mpg123 -q {audio_file}")
             
-            # 3. Run 'on_end' (e.g., stop moving the mouth)
             if 'on_end' in kwargs and callable(kwargs['on_end']):
                 kwargs['on_end']()
 
@@ -263,22 +258,22 @@ class StudyBuddyApp:
     """The main Tkinter GUI that glues all systems together synchronously."""
     def __init__(self, root):
         self.root = root
-        self.root.title("Study Buddy Edge Client")
+        self.root.title("Study Buddy Client")
         self.root.geometry("800x900")
 
         self.brain = RemoteBrain(server_ip=MAC_IP, model=MODEL_NAME)
         self.vision = VisionSystem()
         self.audio = AudioSystem()
         
-        # Initialize the FaceController and LINK it to the UI bridge
         self.face = FaceController(
-            width=300,  # Smaller width to fit side-by-side with camera
+            width=300,
             height=300,
-            display_callback=self.update_face_ui, # THIS IS THE KEY LINK
-            debug_output_dir="face_debug",
-            save_debug_frames=False, # Set to False once working to save SD card life
+            display_callback=self.update_face_ui
         )
         self.face.set_idle()
+
+        # --- HOOK 2: Initialize the motor controller ---
+        self.motors = MotorController()
 
         self.running = True
         self.processing = False
@@ -288,8 +283,6 @@ class StudyBuddyApp:
         
         self.update_video_feed()
         threading.Thread(target=self.voice_loop, daemon=True).start()
-
-        # --- NEW: Start the proactive observer ---
         threading.Thread(target=self.proactive_heartbeat_loop, daemon=True).start()
 
     def _build_ui(self):
@@ -306,15 +299,12 @@ class StudyBuddyApp:
         self.user_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
         self.user_entry.bind("<Return>", lambda event: self.handle_input())
 
-        # Create a frame to hold both "Eyes" (Camera) and "Face" (Expression)
         self.display_frame = tk.Frame(self.root)
         self.display_frame.pack(pady=5)
 
-        # Camera Label (Eyes)
         self.vid_label = tk.Label(self.display_frame, bg="black")
         self.vid_label.pack(side="left", padx=10)
 
-        # NEW: Face Label (Expression)
         self.face_label = tk.Label(self.display_frame, bg="white")
         self.face_label.pack(side="right", padx=10)
 
@@ -325,15 +315,10 @@ class StudyBuddyApp:
         self.exit_btn.pack(pady=10)
 
     def update_face_ui(self, pil_img):
-        """Thread-safe callback that the FaceController calls to push new frames."""
-        # Convert the PIL image from FaceController into a Tkinter-compatible format
         img_tk = ImageTk.PhotoImage(image=pil_img)
-        
-        # We use .after(0, ...) to force the update to happen on the main GUI thread
         self.root.after(0, self._set_face_image, img_tk)
 
     def _set_face_image(self, img_tk):
-        """Internal helper to actually update the label."""
         self.face_label.imgtk = img_tk
         self.face_label.configure(image=img_tk)
 
@@ -343,6 +328,10 @@ class StudyBuddyApp:
                 img = self.vision.get_current_frame()
                 if img:
                     self.current_frame_img = img.copy()
+                    
+                    # --- HOOK 3: Feed the camera image to the motor logic ---
+                    self.motors.process_movement(img)
+
                     img_gui = img.resize((300, 400))
                     imgtk = ImageTk.PhotoImage(image=img_gui)
                     self.vid_label.imgtk = imgtk
@@ -356,52 +345,33 @@ class StudyBuddyApp:
     def voice_loop(self):
         while self.running:
             if not self.processing:
-                # We pass 'self' (the StudyBuddyApp) as the 3rd argument
                 user_text = self.audio.listen(self.set_status, self)
-                
                 if user_text and len(user_text) > 4 and not self.processing:
                     self.trigger_ai_interaction(user_text)
-            
-            time.sleep(0.3) # Give the CPU a tiny breather
+            time.sleep(0.3)
 
     def handle_input(self):
         if self.processing:
-            return # Do nothing if already thinking
+            return 
             
         text = self.user_entry.get().strip()
         if text:
-            self.user_entry.delete(0, tk.END) # Clear the box IMMEDIATELY
+            self.user_entry.delete(0, tk.END)
             self.trigger_ai_interaction(text)
 
     def trigger_ai_interaction(self, text):
-        """Bridges the Tkinter UI to the background network thread."""
-        # --- FIX 1: LOCK IMMEDIATELY ---
         if self.processing:
-            return # Block any second trigger attempts
+            return 
             
         self.processing = True 
         self.set_status("THINKING...")
-        
         self.chat_log.insert(tk.END, f"You: {text}\n\n")
         self.chat_log.see(tk.END)
-
-        # Now start the thread, but the flag is already True
         threading.Thread(target=self.process_ai_stream, args=(text,), daemon=True).start()
 
     def _should_redirect_to_telegram(self, text):
         lower = (text or "").lower()
-        redirect_keywords = [
-            "code",
-            "equation",
-            "derive",
-            "proof",
-            "formula",
-            "step by step",
-            "debug",
-            "algorithm",
-            "syntax",
-            "explain in detail",
-        ]
+        redirect_keywords = ["code", "equation", "derive", "proof", "formula", "step by step", "debug"]
         return any(keyword in lower for keyword in redirect_keywords)
 
     def _tts_finish_face_state(self):
@@ -409,42 +379,29 @@ class StudyBuddyApp:
         self.face.set_idle()
 
     def process_ai_stream(self, text):
-        """Handles vision routing and processes the network stream synchronously."""
-        
-        # --- FIX 1: EARLY ECHO CHECK ---
-        # If the user text is exactly what the AI just said, stop immediately.
+        # ECHO CHECK
         if self.brain.history and self.brain.history[-1]['role'] == 'assistant':
             last_ai_words = self.brain.history[-1]['content'].strip().lower()
             if text.strip().lower() == last_ai_words:
-                print("[DEBUG] Blocked an echo repeat at the start.")
                 self.processing = False
                 self.set_status("READY")
                 return
 
-        # --- FIX 2: TELEGRAM REDIRECT ---
         if self._should_redirect_to_telegram(text):
             self.chat_log.insert(tk.END, f"Agent: {TELEGRAM_REDIRECT_TEXT}\n\n")
             self.chat_log.see(tk.END)
             self.face.set_expression("thinking")
-            # Speak the redirect message
-            self.audio.speak(
-                TELEGRAM_REDIRECT_TEXT,
-                on_start=self.face.start_talking,
-                on_end=self._tts_finish_face_state,
-            )
-            time.sleep(1.0) # Echo cool-down
+            self.audio.speak(TELEGRAM_REDIRECT_TEXT, on_start=self.face.start_talking, on_end=self._tts_finish_face_state)
             self.processing = False
             self.set_status("READY")
             return
 
-        # --- FIX 3: VISION CHECK ---
         vision_keywords = ["look", "see", "show", "analyze", "watch"]
         image_path = None
         if any(word in text.lower() for word in vision_keywords):
             self.set_status("📸 TRANSMITTING PHOTO...")
             image_path = self.vision.save_frame(self.current_frame_img)
 
-        # --- FIX 4: GENERATE RESPONSE ---
         self.set_status("📡 AWAITING MACBOOK...")
         self.chat_log.insert(tk.END, "Agent: ")
         
@@ -456,22 +413,23 @@ class StudyBuddyApp:
 
         self.chat_log.insert(tk.END, "\n\n")
 
-        # --- FIX 5: SINGLE SPEAK CALL ---
-        # Set the face expression based on the reply
+        # --- HOOK 4: AI Command Parser for Motors ---
+        if "*FOLLOW ME*" in full_reply:
+            self.motors.set_state("FOLLOW")
+        elif "*STOP*" in full_reply:
+            self.motors.set_state("IDLE")
+
         emotion = self.face.get_emotion_from_text(full_reply)
         self.face.set_expression(emotion)
         self.set_status("🗣️ SPEAKING...")
 
-        # We call speak ONCE. It handles the mouth start/end and the audio.
         self.audio.speak(
             full_reply,
             on_start=self.face.start_talking,
             on_end=self._tts_finish_face_state,
         )
 
-        # --- FIX 6: COOL-DOWN ---
-        # Wait 1 second for the room to go quiet before allowing the mic to wake up
-        time.sleep(1.0)
+        time.sleep(1.0) # ECHO COOL-DOWN
         self.processing = False
         self.set_status("READY")
 
@@ -479,26 +437,21 @@ class StudyBuddyApp:
         while self.running:
             time.sleep(60) 
             if not self.processing and self.current_frame_img:
-                self.processing = True # LOCK THE MIC
-                
+                self.processing = True 
                 temp_path = self.vision.save_frame(self.current_frame_img, "heartbeat_temp.jpg")
                 analysis = self.brain.silent_observe(temp_path)
-                
                 if analysis and "SILENCE" not in analysis.upper():
-                    self.set_status("💡 INTERVENING...")
                     self.chat_log.insert(tk.END, f"\nAgent (Proactive): {analysis}\n\n")
-                    
-                    # Blocks here until speech is done
                     self.audio.speak(analysis) 
-                    
                     self.brain.history.append({'role': 'assistant', 'content': analysis})
-
-                self.processing = False # UNLOCK THE MIC
+                self.processing = False 
                 self.set_status("READY")
 
     def shutdown(self):
         self.running = False
         self.face.shutdown()
+        # Ensure motors stop on shutdown
+        self.motors.shutdown()
         self.vision.shutdown()
         self.root.destroy()
 
