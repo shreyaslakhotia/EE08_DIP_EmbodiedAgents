@@ -410,7 +410,7 @@ class StudyBuddyApp:
             self.set_status("READY")
             return
 
-        # 3. VISION CHECK: Capture a frame if the user asks the AI to "see" something
+        # 3. VISION CHECK: Capture a frame if keywords are detected
         vision_keywords = ["look", "see", "show", "analyze", "watch"]
         image_path = None
         if any(word in text.lower() for word in vision_keywords):
@@ -429,75 +429,39 @@ class StudyBuddyApp:
 
         self.chat_log.insert(tk.END, "\n\n")
 
-        # 5. ENHANCED MOTOR COMMAND PARSER (The Handshake)
-        # We print the raw output to the terminal so you can see why it might fail.
-        print(f"\n[AI DEBUG] Raw Text Received: '{full_reply}'")
-        
-        # Normalize text to catch "Follow me", "FOLLOW ME", or "*FOLLOW ME*"
+        # 5. MOTOR COMMAND PARSER (The Invisible Handshake)
+        # We check the raw text for movement commands
         clean_text = full_reply.upper()
-
         if "FOLLOW ME" in clean_text:
-            print("[DEBUG] 'FOLLOW ME' found! Triggering MotorController.")
+            print("[DEBUG] 'FOLLOW ME' detected. Triggering motors.")
             if self.motors:
                 self.motors.set_state("FOLLOW")
         elif "STOP" in clean_text:
-            print("[DEBUG] 'STOP' found! Halting MotorController.")
+            print("[DEBUG] 'STOP' detected. Halting motors.")
             if self.motors:
                 self.motors.set_state("IDLE")
         else:
-            print("[DEBUG] No movement command found in this AI response.")
+            print("[DEBUG] No movement command found.")
 
-        # 6. FACIAL EXPRESSION & AUDIO
-        # Set the face based on the text context
+        # 6. THE VOICE FILTER (The "Silence" Part)
+        # We strip the codewords so the AI doesn't SAY them out loud.
+        speech_text = full_reply.replace("*FOLLOW ME*", "").replace("FOLLOW ME", "")
+        speech_text = speech_text.replace("*STOP*", "").replace("STOP", "")
+        speech_text = speech_text.strip()
+
+        # 7. FACIAL EXPRESSION & AUDIO
+        # Set face based on the FULL reply, but speak the FILTERED text
         emotion = self.face.get_emotion_from_text(full_reply)
         self.face.set_expression(emotion)
         
         self.set_status("🗣️ SPEAKING...")
-
-        # This call blocks the thread until the AI finishes talking
         self.audio.speak(
-            full_reply,
+            speech_text, # <--- We only speak the clean conversational part
             on_start=self.face.start_talking,
             on_end=self._tts_finish_face_state,
         )
 
-        self.chat_log.insert(tk.END, "Agent: ")
-        full_reply = ""
-        for token in self.brain.generate_response_stream(text, image_path):
-            full_reply += token
-            self.chat_log.insert(tk.END, token)
-            self.chat_log.see(tk.END)
-        self.chat_log.insert(tk.END, "\n\n")
-
-        # --- THE SMART HANDSHAKE ---
-        clean_text = full_reply.upper()
-        if "FOLLOW ME" in clean_text:
-            print("[DEBUG] AI requested movement. Motors engaged.")
-            if self.motors:
-                self.motors.set_state("FOLLOW")
-        elif "STOP" in clean_text:
-            print("[DEBUG] AI requested stop. Motors idling.")
-            if self.motors:
-                self.motors.set_state("IDLE")
-
-        # --- THE VOICE FILTER ---
-        # We strip the codewords so the AI doesn't SAY them out loud.
-        speech_text = full_reply.replace("*FOLLOW ME*", "").replace("FOLLOW ME", "")
-        speech_text = speech_text.replace("*STOP*", "").replace("STOP", "")
-        # Remove extra whitespace left behind
-        speech_text = speech_text.strip()
-
-        # Update the face and speak the FILTERED text
-        emotion = self.face.get_emotion_from_text(full_reply)
-        self.face.set_expression(emotion)
-        self.set_status("🗣️ SPEAKING...")
-
-        self.audio.speak(
-            speech_text, # Use the clean text here!
-            on_start=self.face.start_talking,
-            on_end=self._tts_finish_face_state,
-        )
-
+        # 8. COOL-DOWN
         time.sleep(1.0) 
         self.processing = False
         self.set_status("READY")
