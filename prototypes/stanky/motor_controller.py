@@ -2,80 +2,78 @@ import cv2
 import numpy as np
 import threading
 import time
-from gpiozero import Robot
+from gpiozero import Motor, PWMOutputDevice
 
 class MotorController:
-    """Handles autonomous movement using Visual Servoing (Camera as a sensor)."""
+    """Autonomous motor control using your friend's specific pin setup."""
     
-    def __init__(self, left_pins=(4, 14), right_pins=(17, 18)):
-        # Initialize the hardware pins
+    def __init__(self):
         try:
-            self.robot = Robot(left=left_pins, right=right_pins)
-            print("[MOTOR] Pins initialized successfully.")
+            # Match the pins from your friend's manual code
+            # Right Motor (Variables named 'left' in friend's code)
+            self.m_right = Motor(forward=26, backward=16)
+            self.pwm_right = PWMOutputDevice(12)
+            
+            # Left Motor (Variables named 'right' in friend's code)
+            self.m_left = Motor(forward=6, backward=5)
+            self.pwm_left = PWMOutputDevice(13)
+            
+            print("[MOTOR] Pins 26, 16, 12 & 6, 5, 13 initialized.")
         except Exception as e:
-            print(f"[MOTOR] Hardware Error: {e}")
-            self.robot = None
+            print(f"[MOTOR] GPIO Error: {e}")
+            self.m_left = self.m_right = None
 
-        self.state = "IDLE"  # IDLE or FOLLOW
-        self.running = True
-        
-        # Load the OpenCV face detection model
+        self.state = "IDLE"  # Can be "IDLE" or "FOLLOW"
         self.cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        
-        # Start the "Brainstem" reflex thread
-        threading.Thread(target=self._reflex_loop, daemon=True).start()
 
     def set_state(self, new_state: str):
-        """AI calls this to switch between IDLE and FOLLOW."""
         self.state = new_state.upper()
-        if self.state == "IDLE" and self.robot:
-            self.robot.stop()
+        if self.state == "IDLE":
+            self.stop()
 
-    def _reflex_loop(self):
-        """The autonomous loop that uses pixels to estimate distance and steering."""
-        while self.running:
-            # We only do the math if the AI has engaged 'FOLLOW' mode
-            if self.state == "FOLLOW" and self.robot:
-                # We get the frame from the main app's vision system later
-                # For now, this loop waits for the robot to have a frame to look at
-                pass 
-            time.sleep(0.1)
+    def stop(self):
+        if self.m_left:
+            self.pwm_left.value = 0
+            self.pwm_right.value = 0
+            self.m_left.stop()
+            self.m_right.stop()
 
     def process_movement(self, pil_image):
-        """Main logic: Camera pixels -> Motor voltages."""
-        if self.state != "FOLLOW" or self.robot is None or pil_image is None:
-            if self.robot: self.robot.stop()
+        """Visual Servoing: Camera pixels -> PWM Speed."""
+        if self.state != "FOLLOW" or self.m_left is None or pil_image is None:
+            self.stop()
             return
 
-        # 1. Convert PIL image to OpenCV format for detection
+        # 1. Image Processing
         cv_img = np.array(pil_image)
         gray = cv2.cvtColor(cv_img, cv2.COLOR_RGB2GRAY)
-        
-        # 2. Detect Faces
         faces = self.cascade.detectMultiScale(gray, 1.1, 5)
 
         if len(faces) > 0:
-            # Target the largest face (closest to robot)
+            # 2. Target largest face
             (x, y, w, h) = max(faces, key=lambda r: r[2] * r[3])
             cx = x + (w // 2)
-            face_area = w * h # Pixel Area (w*h) replaces a distance sensor
+            face_area = w * h
             
-            # 3. Steering Logic (Visual Servoing)
-            # Frame width is usually 480 or 640 depending on rotation
             img_w = pil_image.width
             center_zone = img_w // 2
 
-            if cx < center_zone - 50:
-                self.robot.left(speed=0.4)    # Face is on the left -> Turn Left
-            elif cx > center_zone + 50:
-                self.robot.right(speed=0.4)   # Face is on the right -> Turn Right
-            elif face_area < 28000:           # Face is too small -> Drive Forward
-                self.robot.forward(speed=0.5)
+            # 3. Steering Logic (Using friend's PWM values)
+            # If face is left, spin left. If right, spin right.
+            if cx < center_zone - 60:
+                self.m_left.backward(); self.m_right.forward()
+                self.pwm_left.value = self.pwm_right.value = 0.5
+            elif cx > center_zone + 60:
+                self.m_left.forward(); self.m_right.backward()
+                self.pwm_left.value = self.pwm_right.value = 0.5
+            # If centered but far, drive forward
+            elif face_area < 25000:
+                self.m_left.forward(); self.m_right.forward()
+                self.pwm_left.value = self.pwm_right.value = 0.5
             else:
-                self.robot.stop()             # Face is big enough -> Stay put
+                self.stop() # Target reached
         else:
-            self.robot.stop() # Lost sight of user -> Safety Stop
+            self.stop() # Safety: stop if user disappears
 
     def shutdown(self):
-        self.running = False
-        if self.robot: self.robot.stop()
+        self.stop()
