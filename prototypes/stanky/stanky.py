@@ -383,14 +383,16 @@ class StudyBuddyApp:
         self.face.set_idle()
 
     def process_ai_stream(self, text):
-        # ECHO CHECK
+        # 1. ECHO CHECK: Prevents the AI from responding to its own voice
         if self.brain.history and self.brain.history[-1]['role'] == 'assistant':
             last_ai_words = self.brain.history[-1]['content'].strip().lower()
             if text.strip().lower() == last_ai_words:
+                print("[DEBUG] Echo detected. Ignoring input.")
                 self.processing = False
                 self.set_status("READY")
                 return
 
+        # 2. TELEGRAM REDIRECT: Sends complex tasks to the mobile app
         if self._should_redirect_to_telegram(text):
             self.chat_log.insert(tk.END, f"Agent: {TELEGRAM_REDIRECT_TEXT}\n\n")
             self.chat_log.see(tk.END)
@@ -400,12 +402,14 @@ class StudyBuddyApp:
             self.set_status("READY")
             return
 
+        # 3. VISION CHECK: Capture a frame if the user asks the AI to "see" something
         vision_keywords = ["look", "see", "show", "analyze", "watch"]
         image_path = None
         if any(word in text.lower() for word in vision_keywords):
             self.set_status("📸 TRANSMITTING PHOTO...")
             image_path = self.vision.save_frame(self.current_frame_img)
 
+        # 4. STREAM GENERATION: Get the response from your MacBook
         self.set_status("📡 AWAITING MACBOOK...")
         self.chat_log.insert(tk.END, "Agent: ")
         
@@ -417,23 +421,41 @@ class StudyBuddyApp:
 
         self.chat_log.insert(tk.END, "\n\n")
 
-        # --- HOOK 4: AI Command Parser for Motors ---
-        if "*FOLLOW ME*" in full_reply:
-            self.motors.set_state("FOLLOW")
-        elif "*STOP*" in full_reply:
-            self.motors.set_state("IDLE")
+        # 5. ENHANCED MOTOR COMMAND PARSER (The Handshake)
+        # We print the raw output to the terminal so you can see why it might fail.
+        print(f"\n[AI DEBUG] Raw Text Received: '{full_reply}'")
+        
+        # Normalize text to catch "Follow me", "FOLLOW ME", or "*FOLLOW ME*"
+        clean_text = full_reply.upper()
 
+        if "FOLLOW ME" in clean_text:
+            print("[DEBUG] 'FOLLOW ME' found! Triggering MotorController.")
+            if self.motors:
+                self.motors.set_state("FOLLOW")
+        elif "STOP" in clean_text:
+            print("[DEBUG] 'STOP' found! Halting MotorController.")
+            if self.motors:
+                self.motors.set_state("IDLE")
+        else:
+            print("[DEBUG] No movement command found in this AI response.")
+
+        # 6. FACIAL EXPRESSION & AUDIO
+        # Set the face based on the text context
         emotion = self.face.get_emotion_from_text(full_reply)
         self.face.set_expression(emotion)
+        
         self.set_status("🗣️ SPEAKING...")
 
+        # This call blocks the thread until the AI finishes talking
         self.audio.speak(
             full_reply,
             on_start=self.face.start_talking,
             on_end=self._tts_finish_face_state,
         )
 
-        time.sleep(1.0) # ECHO COOL-DOWN
+        # 7. COOL-DOWN & UNLOCK
+        # Wait 1 second for the room to go silent so the mic doesn't trigger again
+        time.sleep(1.0) 
         self.processing = False
         self.set_status("READY")
 
