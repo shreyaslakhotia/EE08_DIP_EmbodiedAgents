@@ -6,36 +6,25 @@ from gpiozero import Motor, PWMOutputDevice
 class MotorController:
     def __init__(self):
         try:
-            # Match your friend's exact hardware setup
             self.m_right = Motor(forward=26, backward=16)
             self.pwm_right = PWMOutputDevice(12)
             self.m_left = Motor(forward=6, backward=5)
             self.pwm_left = PWMOutputDevice(13)
-            print("[MOTOR] Hardware initialized on Pins 26,16,12 and 6,5,13")
-        except Exception as e:
-            print(f"[MOTOR] GPIO Critical Error: {e}")
+            print("[MOTOR] Pins Initialized.")
+        except:
             self.m_left = None
 
         self.state = "IDLE"
-        # Load the face model - using the absolute path to avoid Pi errors
         self.cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        
+        # --- NEW: ANTI-STUTTER VARIABLES ---
+        self.lost_face_count = 0
+        self.max_lost_frames = 5 # Wait 5 frames before stopping
+        self.is_moving = False
 
     def set_state(self, new_state: str):
         self.state = new_state.upper()
-        print(f"\n[MOTOR] STATE CHANGED TO: {self.state}")
-        
-        # --- HARDWARE OVERRIDE TEST ---
-        # If the AI says follow, jumpstart the motors for 0.5s 
-        # to prove the code can talk to the wheels.
-        if self.state == "FOLLOW" and self.m_left:
-            print("[MOTOR] JOLT TEST: Spinning wheels for 0.5s...")
-            self.m_left.forward()
-            self.m_right.forward()
-            self.pwm_left.value = 0.6
-            self.pwm_right.value = 0.6
-            time.sleep(0.5)
-            self.stop()
-        else:
+        if self.state == "IDLE":
             self.stop()
 
     def stop(self):
@@ -44,49 +33,48 @@ class MotorController:
             self.pwm_right.value = 0
             self.m_left.stop()
             self.m_right.stop()
+        self.is_moving = False
 
     def process_movement(self, pil_image):
         if self.state != "FOLLOW" or self.m_left is None or pil_image is None:
+            self.stop()
             return
 
-        # 1. Image Conversion
         cv_img = np.array(pil_image)
         gray = cv2.cvtColor(cv_img, cv2.COLOR_RGB2GRAY)
-        
-        # 2. Face Detection
-        faces = self.cascade.detectMultiScale(gray, 1.3, 5)
+        faces = self.cascade.detectMultiScale(gray, 1.1, 5)
 
         if len(faces) > 0:
-            # Pick the largest face
+            self.lost_face_count = 0 # Reset the "lost" counter
             (x, y, w, h) = max(faces, key=lambda r: r[2] * r[3])
             cx = x + (w // 2)
             face_area = w * h
             
-            print(f"[MOTOR] I see you! Center X: {cx} | Area: {face_area}")
-
             img_w = pil_image.width
             center_zone = img_w // 2
 
-            # 3. Steering Logic (Matching friend's speed levels)
-            if cx < center_zone - 80:
-                print("[MOTOR] Steering Left")
+            # --- EEE FIX: KICKSTART & POWER INCREASE ---
+            # If we were stopped, give a 1.0 "Kick" to break friction
+            current_power = 0.8 if self.is_moving else 1.0 
+            self.is_moving = True
+
+            if cx < center_zone - 65:
                 self.m_left.backward(); self.m_right.forward()
-                self.pwm_left.value = self.pwm_right.value = 0.6
-            elif cx > center_zone + 80:
-                print("[MOTOR] Steering Right")
+                self.pwm_left.value = self.pwm_right.value = current_power
+            elif cx > center_zone + 65:
                 self.m_left.forward(); self.m_right.backward()
-                self.pwm_left.value = self.pwm_right.value = 0.6
-            elif face_area < 40000: # If face is small, you are far away
-                print("[MOTOR] Driving Forward")
+                self.pwm_left.value = self.pwm_right.value = current_power
+            elif face_area < 30000: 
                 self.m_left.forward(); self.m_right.forward()
-                self.pwm_left.value = self.pwm_right.value = 0.5
+                self.pwm_left.value = self.pwm_right.value = current_power
             else:
-                print("[MOTOR] Within range. Stopping.")
                 self.stop()
         else:
-            # This is likely where it's getting stuck!
-            # If the camera rotation is wrong, it never sees a face.
-            self.stop()
+            # --- NEW: BUFFER LOGIC ---
+            # Don't stop immediately. Increment counter.
+            self.lost_face_count += 1
+            if self.lost_face_count >= self.max_lost_frames:
+                self.stop()
 
     def shutdown(self):
         self.stop()
