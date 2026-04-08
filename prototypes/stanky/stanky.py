@@ -324,20 +324,24 @@ class StudyBuddyApp:
 
     def update_video_feed(self):
         if self.running:
-            if not self.processing:
-                img = self.vision.get_current_frame()
-                if img:
-                    self.current_frame_img = img.copy()
-                    
-                    # --- HOOK 3: Feed the camera image to the motor logic ---
-                    self.motors.process_movement(img)
+            # Capture the frame regardless of whether AI is "thinking"
+            img = self.vision.get_current_frame()
+            
+            if img:
+                self.current_frame_img = img.copy()
+                
+                # --- FIX: Move this OUTSIDE the "not processing" block ---
+                # This ensures the motors keep tracking you even while the AI talks.
+                self.motors.process_movement(img)
 
+                # Only update the GUI if the AI isn't talking (to save CPU)
+                if not self.processing:
                     img_gui = img.resize((300, 400))
                     imgtk = ImageTk.PhotoImage(image=img_gui)
                     self.vid_label.imgtk = imgtk
                     self.vid_label.configure(image=imgtk)
             
-            self.root.after(150, self.update_video_feed)
+            self.root.after(100, self.update_video_feed)
 
     def set_status(self, msg):
         self.status.config(text=f"STATUS: {msg}")
