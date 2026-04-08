@@ -39,6 +39,14 @@ class RemoteBrain:
 
     def generate_response_stream(self, user_text, image_path=None):
         """Yields tokens with built-in retries for robotic resilience."""
+        now = datetime.now()
+        system_injection = (
+            f"You are Stanky, an embodied Study Buddy in Singapore. "
+            f"It is {now.strftime('%H:%M')}. You have wheels. "
+            f"CRITICAL: Use the codeword '*FOLLOW ME*' ONLY if the user explicitly asks you "
+            f"to follow them, come closer, or move. If you are already following or "
+            f"just answering a question, DO NOT use the codeword. Be concise and witty."
+        )
         images_b64 = []
         if image_path:
             try:
@@ -453,8 +461,43 @@ class StudyBuddyApp:
             on_end=self._tts_finish_face_state,
         )
 
-        # 7. COOL-DOWN & UNLOCK
-        # Wait 1 second for the room to go silent so the mic doesn't trigger again
+        self.chat_log.insert(tk.END, "Agent: ")
+        full_reply = ""
+        for token in self.brain.generate_response_stream(text, image_path):
+            full_reply += token
+            self.chat_log.insert(tk.END, token)
+            self.chat_log.see(tk.END)
+        self.chat_log.insert(tk.END, "\n\n")
+
+        # --- THE SMART HANDSHAKE ---
+        clean_text = full_reply.upper()
+        if "FOLLOW ME" in clean_text:
+            print("[DEBUG] AI requested movement. Motors engaged.")
+            if self.motors:
+                self.motors.set_state("FOLLOW")
+        elif "STOP" in clean_text:
+            print("[DEBUG] AI requested stop. Motors idling.")
+            if self.motors:
+                self.motors.set_state("IDLE")
+
+        # --- THE VOICE FILTER ---
+        # We strip the codewords so the AI doesn't SAY them out loud.
+        speech_text = full_reply.replace("*FOLLOW ME*", "").replace("FOLLOW ME", "")
+        speech_text = speech_text.replace("*STOP*", "").replace("STOP", "")
+        # Remove extra whitespace left behind
+        speech_text = speech_text.strip()
+
+        # Update the face and speak the FILTERED text
+        emotion = self.face.get_emotion_from_text(full_reply)
+        self.face.set_expression(emotion)
+        self.set_status("🗣️ SPEAKING...")
+
+        self.audio.speak(
+            speech_text, # Use the clean text here!
+            on_start=self.face.start_talking,
+            on_end=self._tts_finish_face_state,
+        )
+
         time.sleep(1.0) 
         self.processing = False
         self.set_status("READY")

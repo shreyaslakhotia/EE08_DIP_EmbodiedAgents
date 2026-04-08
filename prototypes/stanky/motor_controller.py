@@ -7,24 +7,27 @@ class MotorController:
     def __init__(self):
         try:
             self.m_right = Motor(forward=26, backward=16)
-            self.pwm_right = PWMOutputDevice(12)
+            # Set frequency to 1000Hz for better torque response
+            self.pwm_right = PWMOutputDevice(12, frequency=1000) 
+            
             self.m_left = Motor(forward=6, backward=5)
-            self.pwm_left = PWMOutputDevice(13)
-            print("[MOTOR] Pins Initialized.")
+            self.pwm_left = PWMOutputDevice(13, frequency=1000)
+            print("[MOTOR] Hardware Initialized at 1000Hz")
         except:
             self.m_left = None
 
-        self.state = "IDLE"
-        self.cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        
-        # --- NEW: ANTI-STUTTER VARIABLES ---
-        self.lost_face_count = 0
-        self.max_lost_frames = 5 # Wait 5 frames before stopping
-        self.is_moving = False
-
     def set_state(self, new_state: str):
         self.state = new_state.upper()
-        if self.state == "IDLE":
+        print(f"[MOTOR] STATE: {self.state}")
+        
+        if self.state == "FOLLOW":
+            # BRUTE FORCE TEST: Ignore camera, just drive forward at 100% power
+            print("[MOTOR] CRITICAL TEST: Driving 100% power for 2 seconds...")
+            self.m_left.forward()
+            self.m_right.forward()
+            self.pwm_left.value = 1.0
+            self.pwm_right.value = 1.0
+            time.sleep(2.0)
             self.stop()
 
     def stop(self):
