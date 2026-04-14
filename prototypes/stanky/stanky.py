@@ -12,7 +12,6 @@ import json
 import time
 import os
 import re
-from datetime import datetime
 from face_controller import FaceController
 # --- HOOK 1: Import the motor logic ---
 from motor_controller import MotorController 
@@ -20,12 +19,13 @@ from motor_controller import MotorController
 # ==========================================
 # CONFIGURATION
 # ==========================================
-MAC_IP = "10.91.204.30"  # Replace with your MacBook's IP address
+MAC_IP = "10.91.71.114"  # Replace with your MacBook's IP address
 MODEL_NAME = "qwen3-vl:2b-instruct-q4_k_m"
 TELEGRAM_REDIRECT_TEXT = (
     "this would be easier to explain properly on the Telegram interface where I can "
     "format things clearly. send it there and I'll walk you through it step by step."
 )
+
 
 # ==========================================
 # 1. THE BRAIN (Raw HTTP REST Client)
@@ -35,23 +35,18 @@ class RemoteBrain:
     def __init__(self, server_ip, model):
         self.server_url = f"http://{server_ip}:11434/api/chat"
         self.model = model
-        # FIX: Clean initial memory with Action Tags
-        self.history = [{
-            'role': 'system', 
-            'content': 'You are MotivAI, an embodied Study Buddy. Provide concise answers. Use the exact tag <MOVE> if asked to follow or move. Use <STOP> if asked to stop.'
-        }]
+        self.history = [{'role': 'system', 'content': 'You are an embodied Study Buddy. Provide concise, helpful answers. If asked to follow, include the phrase *FOLLOW ME*. If asked to stop, include *STOP*.'}]
 
     def generate_response_stream(self, user_text, image_path=None):
         """Yields tokens with built-in retries for robotic resilience."""
         now = datetime.now()
-        # FIX: Softened Few-Shot Prompt to prevent Prompt Fixation
         system_injection = (
-            f"You are MotivAI, a helpful Study Buddy in Singapore. "
-            f"It is {now.strftime('%H:%M')}. "
-            f"Rule 1: Always answer the user's questions naturally and concisely in 1 or 2 sentences. "
-            f"Rule 2: ONLY insert the exact tag <MOVE> if the user explicitly asks you to move, come closer, or follow them.\n"
+            f"You are MotivAI, an embodied Study Buddy in Singapore. "
+            f"It is {now.strftime('%H:%M')}. You have wheels. "
+            f"CRITICAL: Use the codeword '*FOLLOW ME*' ONLY if the user explicitly asks you "
+            f"to follow them, come closer, or move. If you are already following or "
+            f"just answering a question, DO NOT use the codeword. Be concise and witty."
         )
-        
         images_b64 = []
         if image_path:
             try:
@@ -61,29 +56,26 @@ class RemoteBrain:
             except Exception as e:
                 print(f"Image Encoding Error: {e}")
 
+        # 1. Append the user message to history ONCE before the retry loop
         message = {'role': 'user', 'content': user_text}
         if images_b64:
             message['images'] = images_b64
         self.history.append(message)
         
-        # FIX: The Silver Bullet for Hallucinations and Repetitions
         payload = {
             "model": self.model,
             "messages": self.history,
             "stream": True,
-            "keep_alive": -1,
-            "options": {
-                "temperature": 0.4,
-                "repeat_penalty": 1.2,
-                "stop": ["User:", "Agent:", "You:", "\n\nUser:"] 
-            }
+            "keep_alive": -1
         }
         
         max_retries = 3
         full_reply = ""
 
+        # 2. Start the Retry Loop
         for attempt in range(max_retries):
             try:
+                # Added a timeout (10s to connect, 30s for the first token)
                 with requests.post(self.server_url, json=payload, stream=True, timeout=(10, 30)) as response:
                     response.raise_for_status()
                     
@@ -95,42 +87,50 @@ class RemoteBrain:
                                 full_reply += token
                                 yield token
 
+                # 3. SUCCESS: If we get here, the stream finished. Update history and EXIT.
                 self.history.append({'role': 'assistant', 'content': full_reply})
-                self._clean_history()
+                self._clean_history()]
+
                 return 
 
             except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+                # 4. FAILURE: If it's not the last attempt, wait and try again
                 if attempt < max_retries - 1:
-                    wait_time = 2 * (attempt + 1) 
+                    wait_time = 2 * (attempt + 1) # Exponential-ish backoff
                     yield f"\n[Signal weak... retrying in {wait_time}s (Attempt {attempt + 1}/{max_retries})]"
                     time.sleep(wait_time)
                 else:
+                    # Final failure
                     yield f"\n[OFFLINE: AI cannot reach the MacBook. Check the server at {MAC_IP}.]"
+                    # Remove the failed message from history so the context stays clean
                     if self.history and self.history[-1]['role'] == 'user':
                         self.history.pop()
 
     def _clean_history(self):
+        """Removes heavy image payloads from past messages to prevent network lag."""
         for msg in self.history:
             if 'images' in msg:
                 del msg['images']
 
     def silent_observe(self, image_path):
+        """A stateless API call that checks the user's emotion without saving to chat history."""
         try:
             with open(image_path, "rb") as img_file:
                 b64_string = base64.b64encode(img_file.read()).decode('utf-8')
             
+            # The strict prompt that forces the AI to evaluate your state
             observation_prompt = (
                 "You are an empathetic study buddy observing the user through a camera. "
                 "Analyze their facial expression and body language. "
                 "If they look visibly frustrated, confused, tired, or have their head in their hands, "
-                "generate a very brief, friendly, supportive interruption. "
+                "generate a very brief, friendly, supportive interruption (e.g., 'You look a bit stuck, want to bounce some ideas off me?' or 'Remember to take a breath!'). "
                 "If they look focused, neutral, or are just reading normally, YOU MUST OUTPUT EXACTLY AND ONLY THE WORD: SILENCE."
             )
 
             payload = {
                 "model": self.model,
                 "messages": [{'role': 'user', 'content': observation_prompt, 'images': [b64_string]}],
-                "stream": False 
+                "stream": False # We don't need to stream this, just get the final verdict
             }
             
             response = requests.post(self.server_url, json=payload, timeout=15)
@@ -148,6 +148,7 @@ class RemoteBrain:
 # 2. THE EYES (Hardware Camera)
 # ==========================================
 class VisionSystem:
+    """Manages the Picamera2 hardware and frame captures."""
     def __init__(self):
         print("Initializing Vision System...")
         self.picam2 = Picamera2()
@@ -159,10 +160,16 @@ class VisionSystem:
 
     def get_current_frame(self):
         try:
+            # Grab the raw array from the camera
             frame = self.picam2.capture_array("main")
+
+            # If the camera already gives RGB, skip swap; if BGR, convert.
+            # Many PiCamera configs produce RGB, so this is safe either way.
             frame_rgb = frame[:, :, ::-1]
+
             img = Image.fromarray(frame_rgb)
             return img.rotate(90, expand=True)
+
         except Exception as e:
             print(f"Vision capture error: {e}")
             return None
@@ -181,6 +188,7 @@ class VisionSystem:
 # 3. THE MOUTH & EARS (Audio Processing)
 # ==========================================
 class AudioSystem:
+    """Manages text-to-speech and speech-to-text."""
     def __init__(self):
         print("Initializing Audio System...")
         self.whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
@@ -188,13 +196,17 @@ class AudioSystem:
         self.recognizer.pause_threshold = 0.5
 
     def listen(self, status_callback, app_instance): 
+        """Listens for audio, but ignores it if the AI is currently speaking."""
         with sr.Microphone() as source:
             status_callback("LISTENING...")
+            # Help the mic ignore background hum
             self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
             
             try:
+                # Capture the audio from the mic
                 audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=8)
                 
+                # --- THE LOCK CHECK ---
                 if app_instance.processing:
                     print("[AUDIO] Ignored: AI was speaking during recording.")
                     return None
@@ -216,18 +228,16 @@ class AudioSystem:
                 return None
 
     def _clean_for_speech(self, text):
+        """Sanitizes LLM markdown and emojis so the TTS doesn't read them."""
         cleaned = re.sub(r'[\*\#\[\]\(\)\`\_]', '', text)
         cleaned = re.sub(r'[^\w\s.,!?\'"\-:]', '', cleaned)
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         return cleaned
 
     def speak(self, text, **kwargs): 
-        # FIX: The Nuke Filter. Deletes tags and legacy codewords before speaking.
-        text = re.sub(r'<[^>]+>', '', text) 
-        text = re.sub(r'(?i)\*?follow me\*?[.,!]*', '', text)
-        
+        """Blocks the thread until speech finishes, handling start/end callbacks."""
         cleaned_text = self._clean_for_speech(text)
-        if not cleaned_text.strip():
+        if not cleaned_text:
             return 
             
         try:
@@ -254,6 +264,7 @@ class AudioSystem:
 # 4. THE INTERFACE (Main Orchestrator)
 # ==========================================
 class StudyBuddyApp:
+    """The main Tkinter GUI that glues all systems together synchronously."""
     def __init__(self, root):
         self.root = root
         self.root.title("Study Buddy Client")
@@ -270,6 +281,7 @@ class StudyBuddyApp:
         )
         self.face.set_idle()
 
+        # --- HOOK 2: Initialize the motor controller ---
         self.motors = MotorController()
 
         self.running = True
@@ -294,8 +306,7 @@ class StudyBuddyApp:
         
         self.user_entry = tk.Entry(self.input_frame, font=("Arial", 14))
         self.user_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
-        # Pass the event properly to the handler
-        self.user_entry.bind("<Return>", self.handle_input) 
+        self.user_entry.bind("<Return>", lambda event: self.handle_input())
 
         self.display_frame = tk.Frame(self.root)
         self.display_frame.pack(pady=5)
@@ -322,15 +333,23 @@ class StudyBuddyApp:
 
     def update_video_feed(self):
         if self.running:
+            # Capture the frame regardless of whether AI is "thinking"
             img = self.vision.get_current_frame()
+            
             if img:
                 self.current_frame_img = img.copy()
+                
+                # --- FIX: Move this OUTSIDE the "not processing" block ---
+                # This ensures the motors keep tracking you even while the AI talks.
                 self.motors.process_movement(img)
+
+                # Only update the GUI if the AI isn't talking (to save CPU)
                 if not self.processing:
                     img_gui = img.resize((300, 400))
                     imgtk = ImageTk.PhotoImage(image=img_gui)
                     self.vid_label.imgtk = imgtk
                     self.vid_label.configure(image=imgtk)
+            
             self.root.after(100, self.update_video_feed)
 
     def set_status(self, msg):
@@ -338,26 +357,23 @@ class StudyBuddyApp:
 
     def voice_loop(self):
         while self.running:
-            if not getattr(self, 'processing', False):
+            if not self.processing:
                 user_text = self.audio.listen(self.set_status, self)
-                if user_text and len(user_text) > 4 and not getattr(self, 'processing', False):
+                if user_text and len(user_text) > 4 and not self.processing:
                     self.trigger_ai_interaction(user_text)
             time.sleep(0.3)
 
-    def handle_input(self, event=None):
-        # FIX: The Airtight Tkinter Lock
-        if getattr(self, 'processing', False):
-            return "break" 
+    def handle_input(self):
+        if self.processing:
+            return 
             
         text = self.user_entry.get().strip()
         if text:
             self.user_entry.delete(0, tk.END)
             self.trigger_ai_interaction(text)
-            
-        return "break"
 
     def trigger_ai_interaction(self, text):
-        if getattr(self, 'processing', False):
+        if self.processing:
             return 
             
         self.processing = True 
@@ -376,16 +392,16 @@ class StudyBuddyApp:
         self.face.set_idle()
 
     def process_ai_stream(self, text):
-        # FIX: Robust Echo Cancellation
+        # 1. ECHO CHECK: Prevents the AI from responding to its own voice
         if self.brain.history and self.brain.history[-1]['role'] == 'assistant':
             last_ai_words = self.brain.history[-1]['content'].strip().lower()
-            incoming = text.strip().lower()
-            if incoming in last_ai_words or last_ai_words in incoming:
-                print(f"[DEBUG] Echo detected and dropped: {text}")
+            if text.strip().lower() == last_ai_words:
+                print("[DEBUG] Echo detected. Ignoring input.")
                 self.processing = False
                 self.set_status("READY")
                 return
 
+        # 2. TELEGRAM REDIRECT: Sends complex tasks to the mobile app
         if self._should_redirect_to_telegram(text):
             self.chat_log.insert(tk.END, f"Agent: {TELEGRAM_REDIRECT_TEXT}\n\n")
             self.chat_log.see(tk.END)
@@ -395,12 +411,14 @@ class StudyBuddyApp:
             self.set_status("READY")
             return
 
+        # 3. VISION CHECK: Capture a frame if keywords are detected
         vision_keywords = ["look", "see", "show", "analyze", "watch"]
         image_path = None
         if any(word in text.lower() for word in vision_keywords):
             self.set_status("📸 TRANSMITTING PHOTO...")
             image_path = self.vision.save_frame(self.current_frame_img)
 
+        # 4. STREAM GENERATION: Get the response from your MacBook
         self.set_status("📡 AWAITING MACBOOK...")
         self.chat_log.insert(tk.END, "Agent: ")
         
@@ -412,30 +430,40 @@ class StudyBuddyApp:
 
         self.chat_log.insert(tk.END, "\n\n")
 
-        # FIX: Action Tag Command Parser
+        # 5. MOTOR COMMAND PARSER (The Invisible Handshake)
+        # We check the raw text for movement commands
         clean_text = full_reply.upper()
         if "<MOVE>" in clean_text:
             print("[DEBUG] <MOVE> tag detected. Triggering motors.")
             if self.motors:
-                self.motors.set_state("FOLLOW")
+                # ---> COMMENT THIS OUT FOR DIAGNOSIS 1 <---
+                # self.motors.set_state("FOLLOW") 
+                print("[TEST] Wheels disabled to test for acoustic loop.")
+                
         elif "<STOP>" in clean_text:
             print("[DEBUG] <STOP> tag detected. Halting motors.")
             if self.motors:
                 self.motors.set_state("IDLE")
 
-        # FIX: Remove legacy string replacements, let the Regex in 'speak' handle it
-        speech_text = full_reply.strip()
+        # 6. THE VOICE FILTER (The "Silence" Part)
+        # We strip the codewords so the AI doesn't SAY them out loud.
+        speech_text = full_reply.replace("*FOLLOW ME*", "").replace("FOLLOW ME", "")
+        speech_text = speech_text.replace("*STOP*", "").replace("STOP", "")
+        speech_text = speech_text.strip()
 
+        # 7. FACIAL EXPRESSION & AUDIO
+        # Set face based on the FULL reply, but speak the FILTERED text
         emotion = self.face.get_emotion_from_text(full_reply)
         self.face.set_expression(emotion)
         
         self.set_status("🗣️ SPEAKING...")
         self.audio.speak(
-            speech_text, 
+            speech_text, # <--- We only speak the clean conversational part
             on_start=self.face.start_talking,
             on_end=self._tts_finish_face_state,
         )
 
+        # 8. COOL-DOWN
         time.sleep(1.0) 
         self.processing = False
         self.set_status("READY")
@@ -443,7 +471,7 @@ class StudyBuddyApp:
     def proactive_heartbeat_loop(self):
         while self.running:
             time.sleep(60) 
-            if not getattr(self, 'processing', False) and self.current_frame_img:
+            if not self.processing and self.current_frame_img:
                 self.processing = True 
                 temp_path = self.vision.save_frame(self.current_frame_img, "heartbeat_temp.jpg")
                 analysis = self.brain.silent_observe(temp_path)
@@ -457,6 +485,7 @@ class StudyBuddyApp:
     def shutdown(self):
         self.running = False
         self.face.shutdown()
+        # Ensure motors stop on shutdown
         self.motors.shutdown()
         self.vision.shutdown()
         self.root.destroy()
