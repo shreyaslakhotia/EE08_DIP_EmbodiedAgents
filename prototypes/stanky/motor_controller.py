@@ -52,29 +52,39 @@ class MotorController:
         # OpenCV Processing
         cv_img = np.array(pil_image)
         gray = cv2.cvtColor(cv_img, cv2.COLOR_RGB2GRAY)
-        faces = self.cascade.detectMultiScale(gray, 1.1, 5)
+        
+        # INCREASED minNeighbors to 8 and added minSize to filter noise
+        faces = self.cascade.detectMultiScale(
+            gray, 
+            scaleFactor=1.1, 
+            minNeighbors=8, 
+            minSize=(60, 60)
+        )
 
         if len(faces) > 0:
             self.lost_face_count = 0
+            # Pick the largest face (closest person)
             (x, y, w, h) = max(faces, key=lambda r: r[2] * r[3])
             cx = x + (w // 2)
-            face_area = w * h # Bigger = Closer
+            face_area = w * h 
             
             img_w = pil_image.width
             center_zone = img_w // 2
 
-            # MAX TORQUE SETTINGS (Speed = 1.0 for heavy chassis)
-            power = 1.0 
+            # PROPORTIONAL-ISH POWER: Start at 0.8 to reduce overshooting
+            power = 0.8 
 
-            if cx < center_zone - 70:
+            # Adjusting the deadzone to be slightly more forgiving
+            if cx < center_zone - 60:
                 self.m_left.backward(); self.m_right.forward()
                 self.pwm_left.value = self.pwm_right.value = power
-            elif cx > center_zone + 70:
+            elif cx > center_zone + 60:
                 self.m_left.forward(); self.m_right.backward()
                 self.pwm_left.value = self.pwm_right.value = power
-            elif face_area < 35000: 
+            elif face_area < 40000: 
+                # Move forward if they are far away
                 self.m_left.forward(); self.m_right.forward()
-                self.pwm_left.value = self.pwm_right.value = power
+                self.pwm_left.value = self.pwm_right.value = 0.7 # Slower forward speed
                 self.is_moving = True
             else:
                 self.stop()
