@@ -91,7 +91,7 @@ def main() -> None:
     if not bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
 
-    model_name = os.getenv("OLLAMA_MODEL", "stanky2")
+    model_name = os.getenv("OLLAMA_MODEL", "stanky3")
     server_url = os.getenv("OLLAMA_CHAT_URL", "http://127.0.0.1:11434/api/chat")
     logger.info("Using Ollama model: %s", model_name)
     logger.info("Using Ollama endpoint: %s", server_url)

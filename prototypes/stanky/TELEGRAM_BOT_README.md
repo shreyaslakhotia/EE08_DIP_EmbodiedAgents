@@ -31,12 +31,12 @@ Run Telegram Bot (Polling)
    macOS/Linux:
    export TELEGRAM_BOT_TOKEN="YOUR_TOKEN"
    export OLLAMA_CHAT_URL="http://127.0.0.1:11434/api/chat"
-   export OLLAMA_MODEL="stanky2"
+   export OLLAMA_MODEL="stanky3"
 
    Windows PowerShell:
    $env:TELEGRAM_BOT_TOKEN="YOUR_TOKEN"
    $env:OLLAMA_CHAT_URL="http://127.0.0.1:11434/api/chat"
-   $env:OLLAMA_MODEL="stanky2"
+   $env:OLLAMA_MODEL="stanky3"
 
 2. Start bot:
    python telegram_bot.py
