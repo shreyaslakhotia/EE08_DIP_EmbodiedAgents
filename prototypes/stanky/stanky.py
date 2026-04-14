@@ -269,8 +269,8 @@ class StudyBuddyApp:
         self.audio = AudioSystem()
         
         self.face = FaceController(
-            width=300,
-            height=300,
+            width=480,
+            height=320,
             display_callback=self.update_face_ui
         )
         self.face.set_idle()
@@ -308,8 +308,14 @@ class StudyBuddyApp:
         self.vid_label = tk.Label(self.display_frame, bg="black")
         self.vid_label.pack(side="left", padx=10)
 
-        self.face_label = tk.Label(self.display_frame, bg="white")
-        self.face_label.pack(side="right", padx=10)
+        # Separate window for the face
+        self.face_window = tk.Toplevel(self.root)
+        self.face_window.title("MotivAI Face")
+        self.face_window.geometry("480x320") # Adjust size as needed for your robot screen
+        self.face_window.configure(bg="black")
+
+        self.face_label = tk.Label(self.face_window, bg="white")
+        self.face_label.pack(expand=True, fill='both')
 
         self.send_btn = tk.Button(self.input_frame, text="SEND", command=self.handle_input)
         self.send_btn.pack(side='right')
